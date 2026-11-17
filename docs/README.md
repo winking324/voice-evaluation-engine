@@ -12,8 +12,9 @@ These documents define the first implementation before code is added. The agreed
 6. [Datasets and benchmark protocol](datasets-and-benchmark-protocol.md)
 7. [Dataset loader MVP usage](dataset-loader.md)
 8. [Web UI, API, and persistence model](ui-api-and-data-model.md)
-9. [Concurrency, reliability, and security](concurrency-reliability-security.md)
-10. [Implementation plan and design review checklist](implementation-plan.md)
+9. [Web dashboard development](../web/README.md)
+10. [Concurrency, reliability, and security](concurrency-reliability-security.md)
+11. [Implementation plan and design review checklist](implementation-plan.md)
 
 ## Decision summary
 
