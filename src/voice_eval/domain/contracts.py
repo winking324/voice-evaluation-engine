@@ -14,9 +14,13 @@ class ContractModel(BaseModel):
 
 
 class AudioInput(ContractModel):
-    """A relative storage key resolved only by a trusted storage adapter."""
+    """A canonical relative key for trusted storage; never an input URL or host path.
 
-    storage_key: str = Field(min_length=1)
+    Storage adapters must resolve the key beneath their configured root and verify
+    the resolved path remains inside that root before reading it.
+    """
+
+    storage_key: str = Field(min_length=1, max_length=1024)
     sha256: str = Field(pattern=r"^[a-fA-F0-9]{64}$")
     duration_ms: int = Field(gt=0)
     media_type: str = Field(min_length=1)
@@ -26,17 +30,27 @@ class AudioInput(ContractModel):
     @field_validator("storage_key")
     @classmethod
     def validate_storage_key(cls, value: str) -> str:
-        decoded = unquote(value)
+        if value != value.strip():
+            raise ValueError("storage_key must not have surrounding whitespace")
+
+        decoded = value
+        for _ in range(8):
+            next_value = unquote(decoded, errors="strict")
+            if next_value == decoded:
+                break
+            decoded = next_value
+        else:
+            raise ValueError("storage_key has too many nested URL-encoding layers")
+
         parts = decoded.split("/")
         if (
-            not value.strip()
-            or value.startswith(("/", "\\"))
-            or "\\" in value
+            decoded.startswith(("/", "\\"))
+            or "\\" in decoded
             or urlsplit(decoded).scheme
-            or any(part in {".", ".."} for part in parts)
+            or any(part in {"", ".", ".."} for part in parts)
         ):
-            raise ValueError("storage_key must be a relative key, not a URL or filesystem path")
-        return value
+            raise ValueError("storage_key must be a canonical relative key, not a URL or path")
+        return decoded
 
 
 class TranscriptionOptions(ContractModel):

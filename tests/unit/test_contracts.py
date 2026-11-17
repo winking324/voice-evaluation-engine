@@ -36,9 +36,18 @@ def test_audio_input_requires_content_hash_and_positive_duration() -> None:
 
 @pytest.mark.parametrize(
     "storage_key",
-    ["https://example.com/audio.wav", "/etc/passwd", "../secret.wav", "clips/%2e%2e/secret.wav"],
+    [
+        "https://example.com/audio.wav",
+        "/etc/passwd",
+        "../secret.wav",
+        "clips/%2e%2e/secret.wav",
+        "%2Fetc/passwd",
+        "foo%5c..%5csecret",
+        "%252Fetc/passwd",
+        "foo%255c%252e%252e%255csecret",
+    ],
 )
-def test_audio_input_rejects_urls_absolute_paths_and_traversal(storage_key: str) -> None:
+def test_audio_input_rejects_urls_absolute_paths_and_encoded_traversal(storage_key: str) -> None:
     with pytest.raises(ValidationError):
         AudioInput(
             storage_key=storage_key,
@@ -46,6 +55,17 @@ def test_audio_input_rejects_urls_absolute_paths_and_traversal(storage_key: str)
             duration_ms=1000,
             media_type="audio/wav",
         )
+
+
+def test_audio_input_returns_canonical_storage_key() -> None:
+    audio = AudioInput(
+        storage_key="dataset/hello%20world.wav",
+        sha256="a" * 64,
+        duration_ms=1000,
+        media_type="audio/wav",
+    )
+
+    assert audio.storage_key == "dataset/hello world.wav"
 
 
 def test_provider_options_accept_nested_json_values() -> None:
