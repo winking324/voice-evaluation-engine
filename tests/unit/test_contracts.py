@@ -111,10 +111,16 @@ def test_segments_reject_negative_or_reversed_times() -> None:
 def test_stream_event_keeps_interim_and_speech_final_semantics_separate() -> None:
     interim = StreamingTranscriptEvent(text="hello", is_final=False)
     utterance_end = StreamingTranscriptEvent(text="hello there", is_final=True, speech_final=True)
+    sample_complete = StreamingTranscriptEvent(
+        text="hello there", is_final=True, speech_final=True, is_terminal=True
+    )
 
     assert interim.is_final is False
+    assert interim.is_terminal is False
     assert utterance_end.is_final is True
     assert utterance_end.speech_final is True
+    assert utterance_end.is_terminal is False
+    assert sample_complete.is_terminal is True
 
 
 def test_audio_frame_requires_data_and_duration() -> None:
