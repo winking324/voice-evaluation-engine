@@ -95,14 +95,33 @@ def test_pcm16_output_has_requested_snr_with_hot_source_without_clipping(source_
     mixed, output_rate = sf.read(artifact.audio_path, dtype="float64", always_2d=True)
     assert output_rate == rate
     assert np.max(np.abs(mixed)) <= 1.0
-    assert any(tag.startswith("output_gain_db:-") for tag in json.loads(artifact.manifest_path.read_text())["samples"][0]["tags"])
+    output_entry = json.loads(artifact.manifest_path.read_text())["samples"][0]
+    assert output_entry["duration_ms"] == 1000
+    assert any(tag.startswith("output_gain_db:-") for tag in output_entry["tags"])
     # The recorded value is used to undo the whole-mixture headroom gain.
     tags = json.loads(artifact.manifest_path.read_text())["samples"][0]["tags"]
-    gain_db = float(next(tag.split(":", 1)[1] for tag in tags if tag.startswith("output_gain_db:")))
+    gain_db = float(
+        next(tag.split(":", 1)[1] for tag in tags if tag.startswith("output_gain_db:"))
+    )
     gain = 10 ** (gain_db / 20)
     estimated_noise = mixed / gain - source
     measured_snr = 20 * np.log10(np.sqrt(np.mean(source**2)) / np.sqrt(np.mean(estimated_noise**2)))
     assert measured_snr == pytest.approx(15, abs=0.35)
+
+
+def test_only_resolves_and_checks_the_selected_audio(source_sample):
+    data_root, manifest_path, _ = source_sample
+    payload = json.loads(manifest_path.read_text())
+    payload["samples"].append({
+        "sample_id": "not-selected",
+        "audio_uri": "audio/missing.wav",
+        "duration_ms": 500,
+        "reference_text": None,
+    })
+    manifest_path.write_text(json.dumps(payload))
+
+    artifact = create_noisy_sample(manifest_path, "speech-1", data_root, snr_db=10, seed=2)
+    assert artifact.audio_path.exists()
 
 
 @pytest.mark.parametrize("snr_db", [-20.01, 60.01, float("nan"), float("inf")])
@@ -142,3 +161,27 @@ def test_rejects_manifest_outside_data_root_and_output_symlink_escape(source_sam
     output_parent.symlink_to(tmp_path, target_is_directory=True)
     with pytest.raises(DatasetLoadError, match="output path escapes"):
         create_noisy_sample(manifest_path, "speech-1", data_root, snr_db=10, seed=1)
+
+
+def test_preexisting_temp_leaf_symlinks_are_not_followed(source_sample, tmp_path):
+    data_root, manifest_path, _ = source_sample
+    first = create_noisy_sample(manifest_path, "speech-1", data_root, snr_db=10, seed=3)
+    first.audio_path.unlink()
+    first.manifest_path.unlink()
+
+    audio_target = tmp_path / "audio-target"
+    manifest_target = tmp_path / "manifest-target"
+    audio_target.write_bytes(b"audio sentinel")
+    manifest_target.write_bytes(b"manifest sentinel")
+    audio_temp_link = first.audio_path.with_name(f".{first.audio_path.name}.tmp")
+    manifest_temp_link = first.manifest_path.with_name(f".{first.manifest_path.name}.tmp")
+    audio_temp_link.symlink_to(audio_target)
+    manifest_temp_link.symlink_to(manifest_target)
+
+    artifact = create_noisy_sample(manifest_path, "speech-1", data_root, snr_db=10, seed=3)
+    assert artifact.audio_path.exists()
+    assert artifact.manifest_path.exists()
+    assert audio_temp_link.is_symlink()
+    assert manifest_temp_link.is_symlink()
+    assert audio_target.read_bytes() == b"audio sentinel"
+    assert manifest_target.read_bytes() == b"manifest sentinel"

@@ -8,6 +8,7 @@ import json
 import math
 import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,9 @@ from voice_eval.datasets.manifest import (
     DatasetLoadError,
     DatasetManifest,
     ManifestSample,
-    load_manifest,
+    _canonical_storage_key,
+    _hash_file,
+    _resolve_audio_path,
 )
 
 NOISE_ALGORITHM_VERSION = "gaussian-white-splitmix64-box-muller-v1"
@@ -71,13 +74,21 @@ def create_noisy_sample(
     if not source_manifest_path.is_relative_to(root):
         raise DatasetLoadError("source manifest must be beneath the configured data root")
 
-    result = load_manifest(source_manifest_path, root)
-    manifest = DatasetManifest.model_validate_json(source_manifest_path.read_bytes())
+    try:
+        manifest_bytes = source_manifest_path.read_bytes()
+        manifest = DatasetManifest.model_validate_json(manifest_bytes)
+    except Exception as error:
+        raise DatasetLoadError(f"invalid source manifest: {error}") from error
+    source_manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
     source_entries = {entry.sample_id: entry for entry in manifest.samples}
     source_entry = source_entries.get(sample_id)
-    source_sample = next((item for item in result.samples if item.sample_id == sample_id), None)
-    if source_entry is None or source_sample is None:
+    if source_entry is None:
         raise DatasetLoadError(f"sample_id not found in source manifest: {sample_id}")
+    source_audio_key = _canonical_storage_key(source_entry.audio_uri)
+    source_path = _resolve_audio_path(source_audio_key, root)
+    source_audio_sha256 = _hash_file(source_path)
+    if source_entry.audio_sha256 is not None and source_entry.audio_sha256 != source_audio_sha256:
+        raise DatasetLoadError(f"audio_sha256 mismatch for sample {sample_id!r}")
 
     try:
         import numpy as np
@@ -87,21 +98,23 @@ def create_noisy_sample(
             "noisy sample generation requires the 'audio' extra (numpy and soundfile)"
         ) from error
 
-    source_path = root.joinpath(*source_sample.audio.storage_key.split("/"))
     try:
         signal, sample_rate = sf.read(source_path, dtype="float64", always_2d=True)
     except Exception as error:
-        raise DatasetLoadError(f"cannot decode source audio {source_sample.audio.storage_key}: {error}") from error
+        raise DatasetLoadError(f"cannot decode source audio {source_audio_key}: {error}") from error
     if signal.size == 0 or not np.isfinite(signal).all():
         raise DatasetLoadError("source audio must contain finite, non-empty samples")
     signal_rms = float(np.sqrt(np.mean(np.square(signal))))
     if not math.isfinite(signal_rms) or signal_rms <= 0:
         raise DatasetLoadError("source audio must have non-zero RMS")
+    duration_ms = round(signal.shape[0] * 1000 / sample_rate)
+    if duration_ms <= 0:
+        raise DatasetLoadError("decoded source audio is shorter than one millisecond")
 
     identity = {
-        "source_manifest_sha256": result.snapshot.manifest_sha256,
+        "source_manifest_sha256": source_manifest_sha256,
         "source_sample_id": sample_id,
-        "source_audio_sha256": source_sample.audio.sha256,
+        "source_audio_sha256": source_audio_sha256,
         "algorithm": NOISE_ALGORITHM_VERSION,
         "snr_db": snr,
         "seed": seed,
@@ -137,12 +150,23 @@ def create_noisy_sample(
     _ensure_contained(audio_path, root)
     _ensure_contained(output_manifest_path, root)
 
-    temp_audio = audio_path.with_name(f".{audio_path.name}.tmp")
+    temp_audio_path: Path | None = None
     try:
-        sf.write(temp_audio, mixed, sample_rate, format="WAV", subtype="PCM_16")
-        os.replace(temp_audio, audio_path)
+        with tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix=f".{audio_path.name}.",
+            suffix=".tmp",
+            dir=audio_path.parent,
+            delete=False,
+        ) as temp_audio:
+            temp_audio_path = Path(temp_audio.name)
+            sf.write(temp_audio, mixed, sample_rate, format="WAV", subtype="PCM_16")
+            temp_audio.flush()
+            os.fsync(temp_audio.fileno())
+        os.replace(temp_audio_path, audio_path)
     except Exception as error:
-        temp_audio.unlink(missing_ok=True)
+        if temp_audio_path is not None:
+            temp_audio_path.unlink(missing_ok=True)
         raise DatasetLoadError(f"cannot write generated WAV: {error}") from error
     output_sha256 = _sha256(audio_path)
     output_tags = [
@@ -157,7 +181,10 @@ def create_noisy_sample(
     ]
     one_sample_manifest = DatasetManifest(
         dataset_id=f"{manifest.dataset_id[:183]}-noisy",
-        dataset_revision=f"{NOISE_ALGORITHM_VERSION};source={result.snapshot.resolved_revision};identity={identity_hash}",
+        dataset_revision=(
+            f"{NOISE_ALGORITHM_VERSION};manifest={source_manifest_sha256};"
+            f"identity={identity_hash}"
+        ),
         license=manifest.license,
         language=manifest.language,
         locale=manifest.locale,
@@ -167,7 +194,7 @@ def create_noisy_sample(
                 sample_id=output_sample_id,
                 audio_uri=audio_key,
                 audio_sha256=output_sha256,
-                duration_ms=source_entry.duration_ms,
+                duration_ms=duration_ms,
                 reference_text=source_entry.reference_text,
                 language=source_entry.language,
                 locale=source_entry.locale,
@@ -235,12 +262,23 @@ def _sha256(path: Path) -> str:
 
 
 def _atomic_write(path: Path, content: bytes) -> None:
-    temp_path = path.with_name(f".{path.name}.tmp")
+    temp_path: Path | None = None
     try:
-        temp_path.write_bytes(content)
+        with tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(content)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
         os.replace(temp_path, path)
     except OSError as error:
-        temp_path.unlink(missing_ok=True)
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
         raise DatasetLoadError(f"cannot write generated manifest: {error}") from error
 
 
