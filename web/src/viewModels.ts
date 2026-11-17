@@ -67,6 +67,7 @@ export interface LeaderboardRow {
 
 export interface SampleRow {
   sampleId: string;
+  attemptNo: number | null;
   provider: string;
   model: string;
   status: string;

@@ -130,6 +130,7 @@ export interface SampleScoreDto {
 }
 
 export interface SampleProviderResultDto {
+  attempt_no: number;
   provider_id: string;
   model: string;
   status: string;

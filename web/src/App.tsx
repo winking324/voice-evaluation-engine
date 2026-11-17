@@ -595,8 +595,8 @@ function availableModels(provider: ProviderChoice, track: Track): ModelChoice[] 
 
 function toDatasetChoice(dataset: DatasetDto): DatasetChoice {
   return {
-    key: dataset.dataset_id,
-    title: dataset.dataset_id,
+    key: dataset.manifest_ref,
+    title: `${dataset.dataset_id} · ${dataset.manifest_ref}`,
     manifestRef: dataset.manifest_ref,
     revision: dataset.resolved_revision,
     declaredRevision: dataset.declared_revision,
@@ -638,10 +638,12 @@ function toLeaderboardRow(row: LeaderboardDto): LeaderboardRow {
 }
 
 function flattenSamples(samples: SampleResultDto[]): SampleRow[] {
-  return samples.flatMap((sample) => {
+  const rows: SampleRow[] = [];
+  for (const sample of samples) {
     if (sample.providers.length === 0) {
-      return [{
+      rows.push({
         sampleId: sample.sample_id,
+        attemptNo: null,
         provider: "—",
         model: "—",
         status: sample.status,
@@ -654,24 +656,29 @@ function flattenSamples(samples: SampleResultDto[]): SampleRow[] {
         totalMs: null,
         finalizationMs: null,
         error: null,
-      }];
+      });
+      continue;
     }
-    return sample.providers.map((provider) => ({
-      sampleId: sample.sample_id,
-      provider: provider.provider_id,
-      model: provider.model,
-      status: provider.status,
-      hasGroundTruth: sample.reference_text !== null,
-      referenceText: sample.reference_text,
-      hypothesisText: provider.transcript,
-      wer: provider.score?.wer ?? null,
-      cer: provider.score?.cer ?? null,
-      ttftMs: provider.ttft_ms,
-      totalMs: provider.latency_ms,
-      finalizationMs: provider.post_audio_finalization_ms,
-      error: provider.error ? `${provider.error.code}: ${provider.error.message}` : null,
-    }));
-  });
+    for (const provider of sample.providers) {
+      rows.push({
+        sampleId: sample.sample_id,
+        attemptNo: provider.attempt_no,
+        provider: provider.provider_id,
+        model: provider.model,
+        status: provider.status,
+        hasGroundTruth: sample.reference_text !== null,
+        referenceText: sample.reference_text,
+        hypothesisText: provider.transcript,
+        wer: provider.score?.wer ?? null,
+        cer: provider.score?.cer ?? null,
+        ttftMs: provider.ttft_ms,
+        totalMs: provider.latency_ms,
+        finalizationMs: provider.post_audio_finalization_ms,
+        error: provider.error ? `${provider.error.code}: ${provider.error.message}` : null,
+      });
+    }
+  }
+  return rows;
 }
 
 function errorMessage(error: unknown): string {
@@ -734,9 +741,9 @@ function Leaderboard({
 
 function SampleTable({ rows }: { rows: SampleRow[] }) {
   return <div className="table-scroll sample-scroll"><table>
-    <thead><tr><th>Sample</th><th>Provider / model</th><th>Status</th><th>Reference / transcript</th><th>WER</th><th>CER</th><th>TTFT</th><th>Finalize</th><th>Total</th></tr></thead>
-    <tbody>{rows.map((row) => <tr key={`${row.sampleId}-${row.provider}`}>
-      <td><code>{row.sampleId}</code></td><td><strong>{row.provider}</strong><small>{row.model}</small></td><td><span className="sample-status">{row.status}</span></td>
+    <thead><tr><th>Sample</th><th>Provider / model</th><th>Attempt</th><th>Status</th><th>Reference / transcript</th><th>WER</th><th>CER</th><th>TTFT</th><th>Finalize</th><th>Total</th></tr></thead>
+    <tbody>{rows.map((row) => <tr key={`${row.sampleId}-${row.provider}-${row.attemptNo ?? "none"}`}>
+      <td><code>{row.sampleId}</code></td><td><strong>{row.provider}</strong><small>{row.model}</small></td><td>{row.attemptNo === null ? "—" : `Attempt ${row.attemptNo}`}</td><td><span className="sample-status">{row.status}</span></td>
       <td className="transcript-cell">
         {row.hasGroundTruth ? <><span className="transcript-label">Reference</span><p>{row.referenceText ?? ""}</p></> : <span className="no-ground-truth">Ground truth unavailable</span>}
         {row.hypothesisText !== null && <><span className="transcript-label">Transcript</span><p>{row.hypothesisText}</p></>}

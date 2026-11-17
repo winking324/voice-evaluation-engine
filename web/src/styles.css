@@ -160,10 +160,10 @@ td small { display: block; margin-top: 3px; color: #8b9795; font-size: 9px; }
 .empty-cell { text-align: center; color: #929e9b; padding: 20px 8px; }
 .table-note { margin: 12px 0 0; color: #899592; font-size: 10px; line-height: 1.5; }
 .sample-scroll { max-height: 400px; border: 1px solid #edf0ef; border-radius: 8px; }
-.sample-scroll table { min-width: 760px; }
+.sample-scroll table { min-width: 820px; }
 .sample-scroll th { position: sticky; top: 0; z-index: 1; }
 .sample-scroll td { white-space: normal; }
-.sample-scroll td:first-child, .sample-scroll td:nth-child(5), .sample-scroll td:nth-child(6), .sample-scroll td:nth-child(7), .sample-scroll td:nth-child(8), .sample-scroll td:nth-child(9) { white-space: nowrap; }
+.sample-scroll td:first-child, .sample-scroll td:nth-child(3), .sample-scroll td:nth-child(4), .sample-scroll td:nth-child(6), .sample-scroll td:nth-child(7), .sample-scroll td:nth-child(8), .sample-scroll td:nth-child(9), .sample-scroll td:nth-child(10) { white-space: nowrap; }
 .sample-scroll code { color: #55706d; font-size: 9px; }
 .sample-status { display: inline-block; border-radius: 99px; padding: 4px 7px; background: #f1f5f4; color: #697a78; font-size: 9px; }
 .transcript-cell { min-width: 200px; max-width: 260px; }
