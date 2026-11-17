@@ -75,7 +75,10 @@ dataset ID, configuration (use `null` only when the dataset has no config),
 split, and column mapping. A 40-character commit SHA marks the selection as
 reproducible. A branch or omitted revision is resolved to a commit SHA for
 provenance, but remains marked non-reproducible because the caller did not pin
-that immutable revision.
+that immutable revision. For a dataset with no ground truth, set
+`text_column=None`; every loaded sample then has `reference_text=None` and
+`has_ground_truth=False`. If a text column name is configured, a missing value
+in any row remains an error.
 
 ```python
 from voice_eval.datasets import HuggingFaceLoadRequest, load_huggingface_dataset
@@ -91,6 +94,8 @@ request = HuggingFaceLoadRequest(
 )
 result = load_huggingface_dataset(request, data_root="data")
 ```
+
+For audio-only datasets, pass `text_column=None` in the request constructor.
 
 HF streaming is enabled. Audio cached outside the configured root is copied to
 `data/cache/hf_audio/` so returned audio keys still resolve under the trusted

@@ -280,9 +280,59 @@ def test_huggingface_rejects_malformed_reference(
         next(iter(load_huggingface_dataset(request, tmp_path / "data").samples))
 
 
+def test_huggingface_supports_audio_only_rows_without_ground_truth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio = tmp_path / "audio-only.wav"
+    _wav(audio)
+    _install_fake_hf(
+        monkeypatch,
+        [{"audio": {"path": str(audio), "bytes": None}, "duration": 100}],
+    )
+    request = HuggingFaceLoadRequest(
+        dataset_id="example/audio-only",
+        config_name=None,
+        split="test",
+        revision="f" * 40,
+        text_column=None,
+        duration_ms_column="duration",
+    )
+
+    sample = next(iter(load_huggingface_dataset(request, tmp_path / "data").samples))
+
+    assert sample.reference_text is None
+    assert not sample.has_ground_truth
+
+
+def test_huggingface_fails_when_configured_text_column_is_missing_from_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio = tmp_path / "audio-only.wav"
+    _wav(audio)
+    _install_fake_hf(
+        monkeypatch,
+        [{"audio": {"path": str(audio), "bytes": None}, "duration": 100}],
+    )
+    request = HuggingFaceLoadRequest(
+        dataset_id="example/audio-only",
+        config_name=None,
+        split="test",
+        revision="1" * 40,
+        duration_ms_column="duration",
+    )
+
+    with pytest.raises(DatasetLoadError, match="reference column 'text' is missing"):
+        next(iter(load_huggingface_dataset(request, tmp_path / "data").samples))
+
+
 def test_huggingface_request_requires_fixed_config_and_split() -> None:
     with pytest.raises(ValueError):
         HuggingFaceLoadRequest(dataset_id="example/voice", split="test")  # type: ignore[call-arg]
+
+    with pytest.raises(ValueError, match="text_column"):
+        HuggingFaceLoadRequest(
+            dataset_id="example/voice", config_name=None, split="test", text_column=" "
+        )
 
 
 def test_huggingface_rejects_cache_symlink_escape(

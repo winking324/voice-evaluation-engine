@@ -38,7 +38,7 @@ class HuggingFaceLoadRequest(BaseModel):
     split: StrictStr = Field(min_length=1, max_length=128)
     revision: StrictStr | None = None
     audio_column: StrictStr = "audio"
-    text_column: StrictStr = "text"
+    text_column: StrictStr | None = "text"
     id_column: StrictStr | None = None
     duration_ms_column: StrictStr | None = None
     language_column: StrictStr | None = None
@@ -47,11 +47,18 @@ class HuggingFaceLoadRequest(BaseModel):
     transcript_style: StrictStr | None = None
     license: StrictStr | None = None
 
-    @field_validator("dataset_id", "split", "audio_column", "text_column")
+    @field_validator("dataset_id", "split", "audio_column")
     @classmethod
     def reject_blank_selection(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("dataset selection fields must not be blank")
+        return value
+
+    @field_validator("text_column")
+    @classmethod
+    def reject_blank_text_column(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("text_column must be null or a non-blank column name")
         return value
 
 
@@ -128,14 +135,16 @@ def load_huggingface_dataset(
                 raise DatasetLoadError(f"Hugging Face row {index} is not a mapping")
             if request.audio_column not in row:
                 raise DatasetLoadError(f"audio column {request.audio_column!r} is missing")
-            if request.text_column not in row:
-                raise DatasetLoadError(f"reference column {request.text_column!r} is missing")
-
-            reference = row[request.text_column]
-            if reference is not None and not isinstance(reference, str):
-                raise DatasetLoadError(
-                    f"reference column {request.text_column!r} must be text or null"
-                )
+            if request.text_column is None:
+                reference = None
+            else:
+                if request.text_column not in row:
+                    raise DatasetLoadError(f"reference column {request.text_column!r} is missing")
+                reference = row[request.text_column]
+                if reference is not None and not isinstance(reference, str):
+                    raise DatasetLoadError(
+                        f"reference column {request.text_column!r} must be text or null"
+                    )
 
             audio_value = row[request.audio_column]
             if not isinstance(audio_value, Mapping):
