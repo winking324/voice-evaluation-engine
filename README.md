@@ -26,7 +26,7 @@ See [docs/architecture.md](docs/architecture.md) for the intended source tree an
 
 ## Quick start
 
-Requirements: Docker Engine/Desktop with Docker Compose. Do not install Python, Node, or database dependencies on the host.
+Requirements: Docker Engine/Desktop and Docker Compose plugin **v2.24.0 or newer**. The Compose file uses `env_file.required` (introduced in v2.24); the bind-mount syntax is also supported by this minimum. Do not install Python, Node, or database dependencies on the host.
 
 1. If `.env` does not exist, copy `.env.example` to `.env`. If you already have an `.env`, keep the current `OPENAI_API_KEY` and `DEEPGRAM_API_KEY` assignments unchanged and append the settings from `.env.example`. Do not replace your existing file with the example.
 2. Put dataset manifests under `data/datasets/manifests/` and matching audio files under `data/datasets/audio/`, or set `DATASET_SOURCE_DIR` to another host folder with those two subdirectories. Manifest `audio_uri` paths are relative to `data/` (for example, `audio/sample.wav`). The mounts are read-only.
