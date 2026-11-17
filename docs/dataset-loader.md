@@ -120,10 +120,12 @@ modified. The source audio corpus is only read; new files are written only to
 the generated sample.
 
 For a prepared corpus, run the tool in a short-lived container with the data
-root mounted read-write for this command (set `DATASET_SOURCE_DIR` to the host
-directory used by Compose):
+root mounted read-write for this command. Set `DATASET_SOURCE_DIR` to the same
+host directory configured for Compose; the default below matches Compose's
+default and does not source `.env`:
 
 ```bash
+export DATASET_SOURCE_DIR=./data/datasets
 docker compose --project-name voice-eval-dev build app
 docker run --rm \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
