@@ -126,6 +126,8 @@ class DatasetLoadResult:
 def load_manifest(
     manifest_path: str | Path,
     data_root: str | Path,
+    *,
+    sample_limit: int | None = None,
 ) -> DatasetLoadResult:
     """Load a JSON manifest, resolving every audio path beneath ``data_root``.
 
@@ -157,7 +159,11 @@ def load_manifest(
     fingerprint = hashlib.sha256()
     fingerprint.update(manifest_bytes)
 
-    for entry in manifest.samples:
+    entries = manifest.samples if sample_limit is None else manifest.samples[:sample_limit]
+    if sample_limit is not None and sample_limit <= 0:
+        raise DatasetLoadError("sample_limit must be greater than zero")
+
+    for entry in entries:
         key = _canonical_storage_key(entry.audio_uri)
         audio_path = _resolve_audio_path(key, resolved_root)
         actual_sha256 = _hash_file(audio_path)

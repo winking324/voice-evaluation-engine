@@ -44,6 +44,8 @@ web/.dockerignore        # excludes frontend secrets, node_modules and build out
 
 Use explicitly versioned base images and locked dependency installs (`uv sync --locked`, `npm ci`). The final image contains the built static UI and Python app, runs as non-root, and exposes only the app port. Do not install PostgreSQL, a message broker, or a process supervisor in the MVP image. Keep the number of server processes at one so the in-process worker concurrency and SQLite write ownership are predictable.
 
+The app image installs the Python `audio` extra for controlled streaming replay. It supplies SoundFile/NumPy for bounded WAV/FLAC decoding and soxr for resampling to the configured PCM16 replay rate. Mount the writable state volume at `/data/runs`; set `DATA_ROOT=/data` and `DATABASE_PATH=/data/runs/voice-evaluation.sqlite3`. The SQLite MVP reads `DATABASE_PATH`; the older SQLAlchemy-oriented `DATABASE_URL` example is not used by this runtime. Queue and concurrency limits are configured with `WORKER_QUEUE_CAPACITY`, `MAX_PENDING_RUNS`, `MAX_SAMPLES_PER_RUN`, and `MAX_WORKER_CONCURRENCY`. Keep corpus inputs on a separate read-only mount.
+
 ## Data and volumes
 
 | Data | Development | Test | Image |

@@ -60,7 +60,9 @@ For controlled streaming replay, take all offsets from one attempt-scoped monoto
 
 For file/batch APIs returning one complete response, TTFT is unavailable; report time to complete response and total request duration instead. Some SDKs buffer the body, so they expose no earlier first-byte event; do not infer one. For true streaming, retain interim/final status and use the explicit TTFT and finalization definitions above. Do not label HTTP TTFB or full-response latency as first-word/first-token latency.
 
-Aggregate p50/p95 and sample count by provider/config/category. Exclude no failures silently: show successful latency distribution and failure/timeout rate separately; describe how timeouts enter end-to-end views. Client-observed timing is not the vendor's internal processing time. Avoid claims of exact vendor latency from client clocks.
+Aggregate p50/p95 and sample count by provider/config/category. The run API uses the nearest-rank percentile estimator (`ceil(p × n)`, one-based); p95 can equal the maximum with small samples, so always show the sample count. Exclude no failures silently: show successful latency distribution and failure/timeout rate separately; describe how timeouts enter end-to-end views. Client-observed timing is not the vendor's internal processing time. Avoid claims of exact vendor latency from client clocks.
+
+In the run API, `latency_ms` for batch attempts measures the adapter call duration. For streaming attempts it is the replay request duration from session setup through the explicit terminal event; local file read, WAV/FLAC decode, downmix, and resampling are excluded. Streaming `ttft_ms` and `post_audio_finalization_ms` are attempt-relative replay measurements in milliseconds. A separate user-perceived end-to-end duration can be added later without changing these provider latency definitions.
 
 ## Cost model
 

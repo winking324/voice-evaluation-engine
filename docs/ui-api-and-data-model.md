@@ -12,7 +12,7 @@
 
 ### Run progress
 
-- Show queued/running/completed/failed/cancelled states and counts (completed, running, pending, retrying, failed/skipped).
+- Show queued/running/completed/failed/cancelled states and counts (completed, running, pending, retrying, failed/skipped). A sample enters `retrying` only between retryable provider attempts; process recovery converts `running` and `retrying` samples to `interrupted`.
 - Show elapsed time and current provider/sample progress without exposing audio/transcript content unnecessarily.
 - Support cancellation and resume/retry failed samples according to policy.
 

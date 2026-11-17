@@ -51,17 +51,19 @@ fields and constraints are defined by `DatasetManifest` and `ManifestSample`.
 
 The small importer reads each chapter's `.trans.txt`, checks its sibling FLAC
 files, computes SHA-256 and duration, and writes a manifest without copying
-audio. Pass the extracted `test-clean` directory as the data root. The
-`huggingface` extra supplies lazy `soundfile` duration support; the directory
-must be readable. In a container, mount the corpus read-only and write the
-manifest to a separate writable path:
+audio. It scans the configured data root recursively. The
+`audio` extra supplies `soundfile` duration and controlled stream decode support;
+the directory must be readable. In a container, mount the data root writable,
+then mount the prepared corpus read-only beneath `data/raw/librispeech`. Run the
+importer against the whole data root so manifest audio keys retain the
+`raw/librispeech/...` prefix and resolve later through the same configured root:
 
 ```bash
 docker run --rm \
-  --mount type=bind,src=/path/to/LibriSpeech/test-clean,dst=/corpus,readonly \
-  --mount type=bind,src="$PWD/data",dst=/output \
+  --mount type=bind,src="$PWD/data",dst=/data \
+  --mount type=bind,src=/path/to/LibriSpeech/test-clean,dst=/data/raw/librispeech,readonly \
   your-built-image \
-  python -c 'from voice_eval.datasets import build_librispeech_manifest; build_librispeech_manifest("/corpus", "/output/librispeech-test-clean.json")'
+  python -c 'from voice_eval.datasets import build_librispeech_manifest; build_librispeech_manifest("/data", "/data/manifests/librispeech-test-clean.json")'
 ```
 
 The container image and command are illustrative; the importer itself is
