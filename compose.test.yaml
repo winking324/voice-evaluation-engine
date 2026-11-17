@@ -1,0 +1,25 @@
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    init: true
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+    environment:
+      ENVIRONMENT: test
+      OPENAI_API_KEY: ""
+      DEEPGRAM_API_KEY: ""
+      DATA_ROOT: /tmp/voice-eval-test/data
+      DATABASE_PATH: /tmp/voice-eval-test/data/runs/test.sqlite3
+      WORKER_QUEUE_CAPACITY: "8"
+      MAX_PENDING_RUNS: "8"
+      MAX_SAMPLES_PER_RUN: "10"
+      MAX_WORKER_CONCURRENCY: "2"

@@ -1,0 +1,60 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    ports:
+      - "127.0.0.1:${VOICE_EVAL_PORT:-8080}:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ENVIRONMENT: development
+      DATA_ROOT: /data
+      DATABASE_PATH: /data/runs/voice-evaluation.sqlite3
+      WEB_DIST_DIR: /app/web/dist
+      HF_HOME: /data/cache/huggingface
+      WORKER_QUEUE_CAPACITY: ${WORKER_QUEUE_CAPACITY:-32}
+      MAX_PENDING_RUNS: ${MAX_PENDING_RUNS:-32}
+      MAX_SAMPLES_PER_RUN: ${MAX_SAMPLES_PER_RUN:-100}
+      MAX_WORKER_CONCURRENCY: ${MAX_WORKER_CONCURRENCY:-16}
+    volumes:
+      - run-data:/data/runs
+      - hf-cache:/data/cache
+      - type: bind
+        source: ${DATASET_SOURCE_DIR:-./data/datasets}/manifests
+        target: /data/manifests
+        read_only: true
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ${DATASET_SOURCE_DIR:-./data/datasets}/audio
+        target: /data/audio
+        read_only: true
+        bind:
+          create_host_path: true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health/live', timeout=2)"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 20s
+
+volumes:
+  run-data:
+  hf-cache:

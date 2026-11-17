@@ -24,27 +24,28 @@ The app listens on a loopback-published port by default. Provider credentials ar
 
 1. **No host dependency installation.** Build and run commands use containers (`docker compose build/up/run/exec`); do not require host `pip`, Node, PostgreSQL, or audio libraries.
 2. **Project-scoped state.** Use distinct Compose project names such as `voice-eval-dev` and `voice-eval-test`. Keep development data in a named volume; tests use a temporary database path or a separate disposable test volume. Test cleanup must never target the development project.
-3. **Protect the prepared dataset.** Mount the dataset source read-only. The test-clean LibriSpeech directory may be supplied through a host path variable, for example `/Users/shanhui/Workspaces/datasets/LibriSpeech/test-clean/LibriSpeech`; do not copy it into the repository or image. A missing optional mount should not prevent the app from starting.
+3. **Protect the prepared dataset.** Set `DATASET_SOURCE_DIR` to a host directory containing `manifests/` and `audio/`. Compose mounts those subdirectories read-only at `/data/manifests` and `/data/audio`; manifest audio paths such as `audio/sample.wav` therefore resolve beneath `DATA_ROOT=/data`. Writable named volumes at `/data/runs` and `/data/cache` keep database/artifacts and cache separate. Missing source subdirectories are created empty so the app can still start. The test service uses synthetic fixtures only and has no dataset mount.
 4. **Keep generated data out of the image.** SQLite files, Hugging Face cache, audio, transcripts, and run exports belong in explicit volumes or read-only mounts, never in image layers or Git.
-5. **Credentials remain local.** Developers copy `.env.example` to ignored `.env`. Compose passes keys at runtime; Dockerfiles must not use build args or `COPY` for secrets. Avoid printing fully interpolated Compose configuration in logs.
+5. **Credentials remain local.** If `.env` already exists, preserve its `OPENAI_API_KEY` and `DEEPGRAM_API_KEY` assignments and append settings from `.env.example`; do not replace the file. Compose injects this file only into the runtime app. The build context excludes `.env` and `.env.*`; Dockerfiles do not use build args or `COPY` for secrets. The test Compose file has no `env_file`, explicitly empties provider keys, and the documented test command disables default Compose interpolation with `--env-file /dev/null`.
 6. **No privileged access.** Do not mount the Docker socket, use host networking, or run privileged containers. Run as a non-root user and grant only the writable paths the app needs.
 7. **No arbitrary URL fetches.** Audio is selected from validated local dataset manifests or an approved source; do not fetch user-supplied audio URLs from the server.
 
-## Planned files and image
+## Docker image and Compose files
 
 ```text
-Dockerfile              # multi-stage frontend build + Python application image
-compose.yaml             # single app service, health check, project-scoped volumes
-compose.test.yaml        # isolated test command/database path and internal network
+Dockerfile              # pinned Node builder, Python runtime and test targets
+compose.yaml             # single non-root app service, loopback port and named volumes
+compose.test.yaml        # standalone test target with no credentials/network
 uv.lock                  # locked Python dependencies
 web/package-lock.json    # locked frontend dependencies
 .dockerignore            # excludes secrets, VCS, datasets, caches and run output
-web/.dockerignore        # excludes frontend secrets, node_modules and build output
 ```
 
-Use explicitly versioned base images and locked dependency installs (`uv sync --locked`, `npm ci`). The final image contains the built static UI and Python app, runs as non-root, and exposes only the app port. Do not install PostgreSQL, a message broker, or a process supervisor in the MVP image. Keep the number of server processes at one so the in-process worker concurrency and SQLite write ownership are predictable.
+The Dockerfile pins Python `3.11.18`, Node `26.13.1` and uv `0.13.8`; `web/package-lock.json` and `uv.lock` lock application dependencies. The final image contains the built static UI and Python app, runs as UID/GID `10001`, uses a read-only root filesystem, drops Linux capabilities, and exposes only the app port. It installs `libsndfile1` plus the Python `audio` and `providers` extras needed for WAV/FLAC streaming replay and WebSocket adapters. Do not install PostgreSQL, a message broker, Node, or a process supervisor in the runtime image. The one API process owns the in-process worker concurrency and SQLite writes.
 
-The app image installs the Python `audio` extra for controlled streaming replay. It supplies SoundFile/NumPy for bounded WAV/FLAC decoding and soxr for resampling to the configured PCM16 replay rate. Mount the writable state volume at `/data/runs`; set `DATA_ROOT=/data` and `DATABASE_PATH=/data/runs/voice-evaluation.sqlite3`. The SQLite MVP reads `DATABASE_PATH`; the older SQLAlchemy-oriented `DATABASE_URL` example is not used by this runtime. Queue and concurrency limits are configured with `WORKER_QUEUE_CAPACITY`, `MAX_PENDING_RUNS`, `MAX_SAMPLES_PER_RUN`, and `MAX_WORKER_CONCURRENCY`. Keep corpus inputs on a separate read-only mount.
+The app serves `/app/web/dist` through FastAPI on the same origin as `/api/v1`. Compose sets `DATA_ROOT=/data`, `DATABASE_PATH=/data/runs/voice-evaluation.sqlite3`, and `WEB_DIST_DIR=/app/web/dist`. The named `run-data` volume stores SQLite and generated state; `hf-cache` stores the optional dataset cache. The configured dataset source contains both `manifests/` and `audio/`; Compose mounts each read-only beneath `/data`, preserving the paths referenced by manifests. Queue and concurrency limits come from `WORKER_QUEUE_CAPACITY`, `MAX_PENDING_RUNS`, `MAX_SAMPLES_PER_RUN`, and `MAX_WORKER_CONCURRENCY`.
+
+The current SQLite app reads `DATABASE_PATH`. `DATABASE_URL` is legacy and ignored. Existing database content is not automatically copied or migrated to the Compose volume; keep the source database untouched and make an explicit backup/export/import plan first. No PostgreSQL-to-SQLite migration command is provided yet. The example file intentionally contains no API-key assignments: preserve existing key lines and values when adding the other settings.
 
 ## Data and volumes
 
@@ -60,23 +61,23 @@ Use SQLite in WAL mode with a configurable busy timeout and short transactions. 
 
 ## Workflows
 
-The final commands are implemented alongside the runnable app, but should follow this shape:
+Use explicit project names so test commands cannot target the development volumes:
 
 ```bash
 # Build and start the app; only the app port is published to loopback.
-docker compose -p voice-eval-dev up --build
+docker compose --env-file .env -p voice-eval-dev up --build -d
 
 # Run deterministic tests in an isolated project with no live provider keys.
-docker compose -p voice-eval-test -f compose.yaml -f compose.test.yaml run --rm app pytest
+docker compose --env-file /dev/null -p voice-eval-test -f compose.test.yaml run --build --rm tests
 
 # Stop the app and preserve local run data.
-docker compose -p voice-eval-dev down
+docker compose --env-file .env -p voice-eval-dev down
 
 # Intentionally erase only disposable test state.
-docker compose -p voice-eval-test -f compose.yaml -f compose.test.yaml down --volumes --remove-orphans
+docker compose --env-file /dev/null -p voice-eval-test -f compose.test.yaml down --remove-orphans
 ```
 
-The test network should be internal so mocked tests cannot call third-party services. Live-provider smoke tests are an explicit separate command/profile with credentials and a small approved sample set; show that audio leaves the machine and may incur provider charges before sending it.
+The test service uses `network_mode: none`; it cannot reach external APIs. The image build itself still requires network access to fetch base images and dependencies. Provider credentials are runtime-only, and live-provider calls happen only when explicitly requested by starting a run. The app port is bound to loopback only.
 
 ## Concurrency and scaling boundary
 
