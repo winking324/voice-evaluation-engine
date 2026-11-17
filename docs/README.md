@@ -19,13 +19,13 @@ These documents define the first implementation before code is added. The agreed
 
 - Backend: Python, FastAPI, Pydantic, SQLAlchemy/Alembic; batch and streaming provider calls use separate contracts, are asynchronous where supported, and are bounded by per-provider concurrency limits.
 - Frontend: React + TypeScript + Vite. The UI is a thin client over a versioned API.
-- Initial persistence: PostgreSQL in the local Compose stack and as the shared/deployable target. SQLite is not the default runtime because it cannot represent the intended concurrent worker behavior.
-- Local development and validation: Docker Compose is the supported runtime; Python/Node dependencies and PostgreSQL run in containers, with isolated project-scoped volumes.
-- Initial background execution: database-backed run/sample state and a worker process. Redis + Celery/ARQ is an explicit scale-up option, not a required MVP dependency.
+- Initial persistence: SQLite in WAL mode on a project-scoped Docker volume; one app process owns the database and the bounded in-process worker pool. PostgreSQL and distributed workers are deferred until measured load requires multiple instances.
+- Local development and validation: Docker Compose is the supported runtime; one container serves the API and built React UI, with project-scoped persistent state and isolated test state.
+- Initial background execution: database-backed run/sample state and bounded asyncio workers inside the app process. Queue and provider concurrency limits are explicit; no broker is required for the personal MVP.
 - Evaluation: JiWER as a tested metric implementation, wrapped by our own versioned normalization profiles. Store raw and normalized text and per-sample alignment counts.
 - Datasets: Hugging Face Datasets adapters plus a manifest-based local dataset format. Dataset version, split, revision, license/access status, and sample IDs are immutable run metadata.
 - Reports: per-provider and per-sample raw results, WER/CER where appropriate, latency percentiles, cost estimate, coverage, failures, and a configurable ranking view.
 
 ## Design status
 
-This is a reviewable architecture proposal, not an implementation contract for a production SLA. Provider pricing/model identifiers and dataset access terms can change; pin and record the values used by each run. The initial dataset mix is intentionally left configurable until a concrete evaluation corpus is selected.
+This is a reviewable architecture proposal, not an implementation contract for a production SLA. Provider pricing/model identifiers and dataset access terms can change; pin and record the values used by each run. A local LibriSpeech `test-clean` baseline is prepared for pipeline verification; it is clean read speech, not personal dictation. A pinned Hugging Face source remains optional.
