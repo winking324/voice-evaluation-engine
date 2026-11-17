@@ -121,6 +121,7 @@ def test_librispeech_builder_references_audio_and_loads_manifest(
     assert result.samples[0].reference_text == "A short transcript."
     assert result.samples[1].reference_text == ""
     assert result.samples[0].audio.storage_key == "1234/5678/1234-5678-0001.flac"
+    assert result.samples[0].audio.media_type == "audio/flac"
     assert result.samples[0].audio.duration_ms == 100
     assert not (dataset_root / "cache").exists()
 

@@ -93,6 +93,7 @@ def build_librispeech_manifest(
                     "audio_uri": resolved_audio.relative_to(root).as_posix(),
                     "audio_sha256": _hash_file(resolved_audio),
                     "duration_ms": duration_ms,
+                    "media_type": "audio/flac",
                     "reference_text": reference_text,
                 }
             )

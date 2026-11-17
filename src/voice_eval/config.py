@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     deepgram_api_key: SecretStr | None = None
     data_root: Path = Path("data")
     database_path: Path = Path("data/runs/voice-evaluation.sqlite3")
+    web_dist_dir: Path | None = None
     worker_queue_capacity: int = Field(default=32, gt=0, le=1000)
     max_pending_runs: int = Field(default=32, gt=0, le=1000)
     max_samples_per_run: int = Field(default=100, gt=0, le=10000)

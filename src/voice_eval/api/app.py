@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from voice_eval.application.runs import RunCapacityError, RunConflict, RunManager
@@ -415,6 +416,12 @@ def create_app(
                     ]
                 )
         return Response(stream.getvalue(), media_type="text/csv")
+
+    if selected.web_dist_dir is not None:
+        web_dist_dir = selected.web_dist_dir.resolve(strict=True)
+        if not web_dist_dir.is_dir():
+            raise ValueError(f"configured web_dist_dir is not a directory: {web_dist_dir}")
+        app.mount("/", StaticFiles(directory=web_dist_dir, html=True), name="web")
 
     return app
 
