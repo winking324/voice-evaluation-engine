@@ -18,7 +18,10 @@ This repository is currently at the design and scaffold stage. See [the design i
 - Report accuracy, latency distributions, cost, failures, and sample coverage separately; do not hide tradeoffs in one opaque score.
 - Treat public datasets as reproducible baselines, not as proof of performance on the product's real users.
 - Never commit API keys, private recordings, or downloaded datasets unless their license and handling policy explicitly permit it.
+- Run the service and tests in Docker Compose so the host Python/Node/database environment remains untouched; keep development and test volumes isolated.
 
 ## Repository map
 
 See [docs/architecture.md](docs/architecture.md) for the intended source tree and module responsibilities, and [docs/implementation-plan.md](docs/implementation-plan.md) for delivery phases.
+
+Container workflow and isolation rules are described in [docs/containerization.md](docs/containerization.md). Executable Dockerfiles and Compose files will be added with the first runnable application phase.

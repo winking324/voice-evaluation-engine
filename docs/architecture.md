@@ -20,11 +20,17 @@ React UI ── HTTP API / progress stream ── FastAPI
 
 The API validates and persists a run request, returns a run ID, and exposes status/results. Workers own long-running provider calls; HTTP request lifetimes must not own an entire batch. The first deployment can use one API process and one worker process. Later, worker replicas can scale independently.
 
+For local development and validation, run the API, worker, web UI and PostgreSQL through Docker Compose. Runtime dependencies stay inside images; dataset cache, test database state and run artifacts use named volumes or explicitly mounted project directories. See [containerized development and testing](containerization.md).
+
 ## Proposed repository tree
 
 ```text
 .
 ├── docs/                         # Product, architecture, metrics, API and ops design
+├── Dockerfile.api                # Planned API/worker image, shared runtime layer
+├── Dockerfile.web                # Planned web development/production image
+├── compose.yaml                  # Planned local app + worker + database + web stack
+├── compose.test.yaml             # Planned disposable test stack/profile
 ├── src/voice_eval/
 │   ├── api/                      # FastAPI routers, request/response schemas, auth boundary
 │   ├── application/              # Use cases: create/cancel/run evaluation, compare runs
@@ -50,10 +56,11 @@ The API validates and persists a run request, returns a run ID, and exposes stat
 ├── scripts/                      # Dataset checks, local run/export helpers
 ├── pyproject.toml
 ├── .env.example
+├── .dockerignore
 └── README.md
 ```
 
-The scaffold phase creates these directories and documentation only; implementation can add files as each module is built. `domain` must not import vendor SDKs, FastAPI or persistence details. `application` orchestrates ports; adapters implement those ports. This dependency direction keeps scoring and run state deterministic and vendor-neutral.
+The scaffold phase creates these directories and documentation only; implementation can add files as each module is built. Container files are planned for the first implementation phase. `domain` must not import vendor SDKs, FastAPI or persistence details. `application` orchestrates ports; adapters implement those ports. This dependency direction keeps scoring and run state deterministic and vendor-neutral.
 
 ## Core boundaries
 
@@ -67,7 +74,7 @@ The scaffold phase creates these directories and documentation only; implementat
 
 ## Persistence and artifact strategy
 
-Use PostgreSQL in shared deployments for concurrent workers and durable job state. Local SQLite can simplify development and single-worker smoke runs, but do not rely on SQLite locking behavior for concurrency claims. Store large audio outside relational rows; persist an opaque storage URI, checksum, format metadata and access policy. Keep provider responses and per-sample JSON artifacts with retention configurable. Public dataset audio should be fetched/cache-managed, not copied into the repository.
+Use PostgreSQL in the Compose development/test stacks and shared deployments so local behavior matches the intended concurrent-worker model. SQLite may be used for isolated unit-level experiments, but not as the supported app runtime. Store large audio outside relational rows; persist an opaque storage URI, checksum, format metadata and access policy. Keep provider responses and per-sample JSON artifacts with retention configurable. Public dataset audio should be fetched/cache-managed, not copied into the repository.
 
 ## Architectural references
 

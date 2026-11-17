@@ -4,13 +4,15 @@
 
 ### Phase 0 — scaffold and design (current)
 
-- Create repository directories, README, `.gitignore`, and reviewed module design docs.
+- Create repository directories, README, `.gitignore`, and reviewed module design docs, including container isolation strategy.
 - Confirm scenario as English personal dictation.
 - Keep exact dataset and target locale as explicit configuration decisions.
 
 ### Phase 1 — reproducible batch core
 
-- Python packaging/configuration, domain entities, migrations and local developer setup.
+- Python packaging/configuration, domain entities and migrations.
+- Dockerfiles and Compose development stack for API, worker, web UI and PostgreSQL; no host Python/Node/database dependency installation.
+- Isolated Compose test project with disposable database state and mocked external provider calls by default.
 - Manifest dataset loader and one pinned public English baseline subset.
 - Provider interface and two adapters; secrets via environment; mocked adapter contract tests.
 - Bounded asynchronous worker, run/sample state persistence and attempt-level timestamps.
@@ -23,6 +25,7 @@
 - React UI for configuration, progress, leaderboard, per-sample inspection and export.
 - PostgreSQL deployment path; SSE progress with polling fallback.
 - Compare repeat runs and surface coverage, retries and errors.
+- Document containerized startup, stop, data reset and optional live-provider smoke workflows.
 
 ### Phase 3 — benchmark quality
 
@@ -35,13 +38,14 @@
 - Measure expected peak QPS and queue time targets.
 - If database polling worker is insufficient, add durable broker and horizontally scaled workers, provider token buckets and operational dashboards.
 - Add user access control, retention/deletion automation and object storage as deployment requires.
+- Add production image hardening/scanning and CI container build checks; keep developer Compose configuration separate from deployment manifests.
 
 ## Decisions required before implementation of benchmark fixtures
 
 - Select exact initial dataset ID/revision/split, after checking license/access and provider submission permissions.
 - Select target locale and dictation transcript style (verbatim vs lightly formatted); the initial language is English, but English variant is not yet set.
 - Set provider model IDs, options, regions and cost source at implementation time against current official documentation.
-- Decide if local development can start with SQLite or should require PostgreSQL. The design supports both, with PostgreSQL as shared deployment target.
+- The local Compose app/test runtime uses PostgreSQL. SQLite is limited to isolated unit-level experiments and does not stand in for concurrent-worker integration tests.
 
 These are not blockers for the scaffold or architecture. They are blockers for publishing a meaningful benchmark result, so the software must make them explicit rather than silently choosing defaults.
 
@@ -70,6 +74,9 @@ These are not blockers for the scaffold or architecture. They are blockers for p
 - [ ] Failed/slow/retried calls and cost are visible; coverage accompanies all rankings.
 - [ ] Public and private audio handling follows license/consent/provider policies; secrets and data are excluded from Git.
 - [ ] UI clearly labels small or nonrepresentative sample results.
+- [ ] Dev and test Compose project names, networks and volumes are separate; test cleanup cannot delete dev data.
+- [ ] No credentials, private audio, dataset cache or run output are included in container build contexts/images.
+- [ ] Routine Compose shutdown preserves dev DB/cache; live API smoke tests are opt-in.
 - [ ] Tests cover metric edge cases, retries/state transitions, provider response mapping and timing derivation; external provider calls are opt-in.
 
 ## Reference projects and sources

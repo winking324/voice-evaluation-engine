@@ -4,7 +4,7 @@
 
 The workload is primarily I/O-bound provider requests, so Python `asyncio` is appropriate when provider clients support nonblocking I/O. Wrap each provider with a semaphore/token bucket to enforce its concurrency and request-rate limits. Also cap global concurrency and queued work. If an SDK is synchronous, run calls in a bounded thread pool; do not block the event loop. CPU-heavy resampling/noise mixing belongs in a process worker or separate preprocessing phase.
 
-MVP can use a dedicated worker process polling database-backed sample jobs, with atomic claim/lease and bounded async task groups. This avoids coupling batch lifetime to an HTTP request and supports restart recovery. Local SQLite is restricted to one worker for development/smoke runs; use PostgreSQL for concurrent worker claims. This is acceptable at modest single-instance throughput, but requires careful claim/lease semantics and polling backoff. At higher QPS or multi-instance scale, use a durable broker (e.g. Redis + Celery/ARQ) and independently scale workers. Queue choice is an implementation decision after expected load and deployment environment are known; do not introduce broker operations before needed.
+MVP can use a dedicated worker process polling PostgreSQL-backed sample jobs, with atomic claim/lease and bounded async task groups. This avoids coupling batch lifetime to an HTTP request and supports restart recovery. The local Compose stack also uses PostgreSQL so development and test behavior match the intended concurrent-worker model. This is acceptable at modest single-instance throughput, but requires careful claim/lease semantics and polling backoff. At higher QPS or multi-instance scale, use a durable broker (e.g. Redis + Celery/ARQ) and independently scale workers. Queue choice is an implementation decision after expected load and deployment environment are known; do not introduce broker operations before needed.
 
 ## Job and retry semantics
 
@@ -32,6 +32,7 @@ MVP can use a dedicated worker process polling database-backed sample jobs, with
 - Restrict upload types and storage locations; use non-public object storage and short-lived signed URLs if deployed remotely.
 - Respect dataset licenses, consent and provider data-use/retention terms before sending samples. Do not silently upload a gated dataset.
 - Store only provider request/response fields needed for evaluation; raw response retention should be configurable and documented.
+- Container runtime follows [the containerization design](containerization.md): non-root services, no Docker socket/privileged mode, loopback-only published ports, secrets injected at runtime, and datasets/artifacts mounted in explicit paths.
 
 ## Observability
 
