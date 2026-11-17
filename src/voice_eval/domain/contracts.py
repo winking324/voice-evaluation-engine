@@ -121,13 +121,19 @@ class AudioFrame(ContractModel):
 
 
 class StreamingTranscriptEvent(ContractModel):
-    """A provider-neutral transcript event; receive timing is stamped by the runner."""
+    """A provider-neutral transcript event; receive timing is stamped by the runner.
+
+    ``is_final`` marks a stable segment, while ``speech_final`` marks an endpoint.
+    Only ``is_terminal`` means the provider confirms the complete finite input
+    transcript is complete. These signals are intentionally independent.
+    """
 
     sequence: int | None = Field(default=None, ge=0)
     segment_id: str | None = None
     text: str
     is_final: bool
     speech_final: bool | None = None
+    is_terminal: bool = False
     start_ms: int | None = Field(default=None, ge=0)
     end_ms: int | None = Field(default=None, ge=0)
     confidence: float | None = Field(default=None, ge=0, le=1)
