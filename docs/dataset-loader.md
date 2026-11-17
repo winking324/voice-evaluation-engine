@@ -129,7 +129,7 @@ docker run --rm \
   --entrypoint python "$(docker compose images -q app)" \
   -m voice_eval.datasets.noisy_sample \
   --manifest /data/manifests/librispeech-test-clean.json \
-  --sample-id <sample-id> --data-root /data --snr-db 10 --seed 42
+  --sample-id '1089-134686-0000' --data-root /data --snr-db 10 --seed 42
 ```
 
 This one-off container mounts the prepared `DATASET_SOURCE_DIR` read-write;
