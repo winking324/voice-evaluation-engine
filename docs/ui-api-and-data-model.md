@@ -35,6 +35,8 @@
 - `GET /runs/{run_id}/export?format=csv|json` — export report.
 - `GET /providers` — provider capability/config schema; never return credentials.
 
+Local manifests without declared per-audio checksums are listed with `revision_status="computed_on_run"`; the UI should say that run creation validates audio and computes the content fingerprint, rather than labeling the dataset unpinned. When all audio checksums are declared, the catalog can preview the resolved fingerprint.
+
 The API is asynchronous for batch execution. Idempotency key on run creation prevents accidental duplicate submissions. Schema changes require explicit API versioning/migration policy.
 
 ## Data model (logical)

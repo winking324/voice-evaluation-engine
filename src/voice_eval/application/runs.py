@@ -59,6 +59,7 @@ class RunManager:
         self._backlog: list[str] = []
         self.retry_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
         self._creation_locks: dict[str, tuple[asyncio.Lock, int]] = {}
+        self._admission_lock = asyncio.Lock()
 
     async def start(self) -> None:
         pending = self.repo.recovery()
@@ -155,33 +156,39 @@ class RunManager:
             "config": config,
             "created_at": now,
         }
-        try:
-            self.repo.create(
-                run,
-                [
-                    {
-                        "sample_id": s.sample_id,
-                        "audio": s.audio.model_dump(mode="json"),
-                        "reference_text": s.reference_text,
-                    }
-                    for s in samples
-                ],
-            )
-        except sqlite3.IntegrityError as exc:
-            raced = self.repo.get_by_idempotency_key(idem_key)
-            if raced is None:
-                raise
-            if raced["request_hash"] != digest:
-                raise RunConflict(
-                    "Idempotency-Key was already used with a different request"
-                ) from exc
-            return raced, False
-        try:
+        async with self._admission_lock:
+            existing = self.repo.get_by_idempotency_key(idem_key)
+            if existing:
+                if existing["request_hash"] != digest:
+                    raise RunConflict("Idempotency-Key was already used with a different request")
+                return existing, False
+            if self.repo.count_active_runs() >= self.settings.max_pending_runs or self.queue.full():
+                raise RunCapacityError("run capacity is full")
+            try:
+                self.repo.create(
+                    run,
+                    [
+                        {
+                            "sample_id": s.sample_id,
+                            "audio": s.audio.model_dump(mode="json"),
+                            "reference_text": s.reference_text,
+                        }
+                        for s in samples
+                    ],
+                )
+            except sqlite3.IntegrityError as exc:
+                raced = self.repo.get_by_idempotency_key(idem_key)
+                if raced is None:
+                    raise
+                if raced["request_hash"] != digest:
+                    raise RunConflict(
+                        "Idempotency-Key was already used with a different request"
+                    ) from exc
+                return raced, False
             self.queue.put_nowait(run_id)
-        except asyncio.QueueFull:
-            self.repo.update_run(run_id, status="failed", finished_at=datetime.now(UTC).isoformat())
-            raise RunCapacityError("worker queue is full") from None
-        return self.repo.get_run(run_id), True  # type: ignore[return-value]
+            created = self.repo.get_run(run_id)
+            assert created is not None
+            return created, True
 
     async def _work(self) -> None:
         while not self._stopping:
@@ -534,8 +541,8 @@ class RunManager:
             raise RunConflict("Idempotency-Key header is required")
         if self.repo.has_retry_key(run_id, retry_key):
             return self.run_view(run_id)
-        if self.queue.full():
-            raise RunCapacityError("worker queue is full")
+        if self.queue.full() or self.repo.count_active_runs() >= self.settings.max_pending_runs:
+            raise RunCapacityError("run capacity is full")
         retryable = [
             s for s in self.repo.samples(run_id) if s["status"] in {"failed", "interrupted"}
         ]

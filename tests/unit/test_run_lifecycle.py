@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import sqlite3
 import time
@@ -8,8 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from voice_eval.api.app import create_app
-from voice_eval.application.runs import _percentile
+from voice_eval.application.runs import RunCapacityError, _percentile
 from voice_eval.config import Settings
+from voice_eval.datasets.manifest import load_manifest
 from voice_eval.domain.contracts import AudioFrame, StreamingTranscriptEvent, TranscriptionResult
 from voice_eval.persistence import RunRepository
 from voice_eval.providers.errors import ProviderError, ProviderErrorCode
@@ -175,6 +177,63 @@ def test_missing_ground_truth_is_unscored(tmp_path: Path) -> None:
         assert done["leaderboard"][0]["wer"] is None
 
 
+def test_dataset_catalog_explains_run_time_fingerprint(tmp_path: Path) -> None:
+    with TestClient(make_app(tmp_path)) as client:
+        result = client.get("/api/v1/datasets")
+        assert result.status_code == 200
+        dataset = result.json()["items"][0]
+        assert dataset["resolved_revision"] is None
+        assert dataset["revision_status"] == "computed_on_run"
+        assert dataset["reproducible"] is True
+        assert "computes a content fingerprint" in dataset["revision_note"]
+
+
+def test_dataset_catalog_previews_declared_audio_checksums(tmp_path: Path) -> None:
+    app = make_app(tmp_path)
+    root = tmp_path / "data"
+    manifest_path = root / "manifests" / "test.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["samples"][0]["audio_sha256"] = hashlib.sha256(
+        (root / "audio.wav").read_bytes()
+    ).hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+    expected = load_manifest(manifest_path, root).snapshot.resolved_revision
+    with TestClient(app) as client:
+        dataset = client.get("/api/v1/datasets").json()["items"][0]
+        assert dataset["resolved_revision"] == expected
+        assert dataset["revision_status"] == "precomputed"
+        assert dataset["reproducible"] is True
+
+
+def test_dataset_catalog_ignores_manifest_symlink_outside_data_root(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    (root / "manifests").mkdir(parents=True)
+    outside_manifest = tmp_path / "private.json"
+    outside_manifest.write_text(
+        json.dumps(
+            {
+                "dataset_id": "private-metadata",
+                "samples": [
+                    {
+                        "sample_id": "s1",
+                        "audio_uri": "outside.wav",
+                        "duration_ms": 1000,
+                        "reference_text": "private",
+                        "media_type": "audio/wav",
+                    }
+                ],
+            }
+        )
+    )
+    try:
+        (root / "manifests" / "leak.json").symlink_to(outside_manifest)
+    except OSError as error:
+        pytest.skip(f"symlink creation unavailable: {error}")
+    settings = Settings(data_root=root, database_path=tmp_path / "runs.sqlite3")
+    with TestClient(create_app(settings, providers={})) as client:
+        assert client.get("/api/v1/datasets").json()["items"] == []
+
+
 def test_provider_failure_is_recorded_and_retry_is_idempotent(tmp_path: Path) -> None:
     with TestClient(make_app(tmp_path, fail=True)) as client:
         created = client.post(
@@ -190,6 +249,42 @@ def test_provider_failure_is_recorded_and_retry_is_idempotent(tmp_path: Path) ->
             f"/api/v1/runs/{done['run_id']}/retry-failed", headers={"Idempotency-Key": "retry1"}
         )
         assert rejected.status_code == 409
+
+
+class FailsTwiceThenSucceeds:
+    provider_id = "openai"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def transcribe(self, audio, options):
+        self.calls += 1
+        if self.calls <= 2:
+            raise RuntimeError("temporary test failure")
+        return TranscriptionResult(provider_id="openai", model_id=options.model, text="hello world")
+
+
+def test_explicit_retry_budget_counts_prior_attempts_once(tmp_path: Path) -> None:
+    provider = FailsTwiceThenSucceeds()
+    app = make_app(tmp_path, providers={"openai": provider})
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/runs",
+            headers={"Idempotency-Key": "retry-twice"},
+            json={**payload(), "max_attempts": 3},
+        )
+        run_id = created.json()["run_id"]
+        assert wait_run(client, run_id)["status"] == "failed"
+        for retry_key, expected_status in (("retry-1", "failed"), ("retry-2", "succeeded")):
+            retried = client.post(
+                f"/api/v1/runs/{run_id}/retry-failed",
+                headers={"Idempotency-Key": retry_key},
+            )
+            assert retried.status_code == 202
+            assert wait_run(client, run_id)["status"] == expected_status
+        attempts = client.get(f"/api/v1/runs/{run_id}/samples").json()["items"][0]["providers"]
+        assert [attempt["attempt_no"] for attempt in attempts] == [1, 2, 3]
+        assert provider.calls == 3
 
 
 def test_queued_cancel_and_queue_capacity(tmp_path: Path) -> None:
@@ -357,6 +452,25 @@ def test_concurrent_same_idempotency_key_creates_one_run(tmp_path: Path) -> None
     first, second = asyncio.run(create_twice())
     assert first[0]["id"] == second[0]["id"]
     assert sorted((first[1], second[1])) == [False, True]
+
+
+def test_concurrent_distinct_keys_cannot_over_admit_capacity(tmp_path: Path) -> None:
+    app = make_app(tmp_path)
+    manager = app.state.run_manager
+    manager.settings.max_pending_runs = 1
+
+    async def create_twice():
+        return await asyncio.gather(
+            manager.create(payload(), "capacity-a"),
+            manager.create(payload(), "capacity-b"),
+            return_exceptions=True,
+        )
+
+    results = asyncio.run(create_twice())
+    assert sum(isinstance(result, tuple) for result in results) == 1
+    errors = [result for result in results if isinstance(result, BaseException)]
+    assert len(errors) == 1 and isinstance(errors[0], RunCapacityError)
+    assert manager.repo.count_active_runs() == 1
 
 
 class RetryableThenSuccessProvider:

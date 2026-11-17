@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import io
 import json
 from collections.abc import AsyncIterator
@@ -145,19 +146,46 @@ def create_app(
     @app.get("/api/v1/datasets")
     async def datasets() -> dict[str, Any]:
         items = []
-        manifest_dir = selected.data_root / "manifests"
+        data_root = selected.data_root.resolve(strict=True)
+        manifest_dir = data_root / "manifests"
         if manifest_dir.is_dir():
             for path in sorted(manifest_dir.glob("*.json")):
                 try:
                     from voice_eval.datasets.manifest import DatasetManifest
 
-                    manifest = DatasetManifest.model_validate_json(path.read_bytes())
+                    resolved_path = path.resolve(strict=True)
+                    if not resolved_path.is_relative_to(data_root) or not resolved_path.is_file():
+                        continue
+                    manifest_bytes = resolved_path.read_bytes()
+                    manifest = DatasetManifest.model_validate_json(manifest_bytes)
+                    has_declared_audio_hashes = all(
+                        sample.audio_sha256 is not None for sample in manifest.samples
+                    )
+                    preview_revision = None
+                    if has_declared_audio_hashes:
+                        fingerprint = hashlib.sha256()
+                        fingerprint.update(manifest_bytes)
+                        for sample in manifest.samples:
+                            if sample.audio_sha256 is None:
+                                continue
+                            fingerprint.update(sample.sample_id.encode("utf-8"))
+                            fingerprint.update(bytes.fromhex(sample.audio_sha256))
+                        preview_revision = f"sha256:{fingerprint.hexdigest()}"
                     items.append(
                         {
                             "dataset_id": manifest.dataset_id,
-                            "manifest_ref": path.relative_to(selected.data_root).as_posix(),
+                            "manifest_ref": path.relative_to(data_root).as_posix(),
                             "declared_revision": manifest.dataset_revision,
-                            "resolved_revision": None,
+                            "resolved_revision": preview_revision,
+                            "revision_status": (
+                                "precomputed" if has_declared_audio_hashes else "computed_on_run"
+                            ),
+                            "revision_note": (
+                                "Revision preview uses declared audio checksums."
+                                if has_declared_audio_hashes
+                                else "Run creation validates audio and computes "
+                                "a content fingerprint."
+                            ),
                             "license": manifest.license,
                             "language": manifest.language,
                             "locale": manifest.locale,
@@ -165,7 +193,7 @@ def create_app(
                             "ground_truth_count": sum(
                                 s.reference_text is not None for s in manifest.samples
                             ),
-                            "reproducible": False,
+                            "reproducible": True,
                         }
                     )
                 except Exception:
