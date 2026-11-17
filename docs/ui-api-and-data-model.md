@@ -5,6 +5,7 @@
 ### New evaluation
 
 - Choose an available dataset/version/split and sample limit or select an approved local manifest.
+- Choose the benchmark track: prerecorded batch or controlled streaming replay. For streaming, configure a common audio chunk size/feed pace; defaults are pinned and applied identically to all selected providers.
 - Select providers/models and provider-specific options; validate missing credentials and unsupported combinations before launch.
 - Choose scoring profile, locale, bounded concurrency and repeat count.
 - Show estimated sample count/audio duration and an estimated cost range when available; require explicit launch action.
@@ -17,15 +18,15 @@
 
 ### Results and comparison
 
-- Compare runs only when dataset revision/split/sample set, evaluation profile and relevant configurations match or visibly explain differences.
-- Leaderboard columns: provider/model, normalized WER, CER where meaningful, p50/p95 latency, estimated/actual cost per audio minute, success/timeout rate, sample coverage.
+- Compare runs only when dataset revision/split/sample set, evaluation track, scoring profile and relevant configurations match or visibly explain differences.
+- Keep batch and streaming leaderboards separate. Batch columns include normalized WER, CER where meaningful, p50/p95 request latency, estimated/actual cost per audio minute, success/timeout rate and coverage. Streaming columns additionally show TTFT p50/p95, post-audio finalization delay, session setup time and replay pacing.
 - Per-sample table: audio playback where permitted, reference, raw hypotheses, normalized hypotheses, diff/alignment, latency, cost, status and provider error.
 - Filter by dataset tags/slices and export CSV/JSON. Display sample count and caveat if corpus is small or nonrepresentative.
 
 ## API sketch (versioned under `/api/v1`)
 
 - `GET /datasets` — available dataset descriptors and pinned revisions.
-- `POST /runs` — validate and snapshot a run request; return `202` with `run_id`.
+- `POST /runs` — validate and snapshot a run request including track and (for streaming) replay pacing; return `202` with `run_id`.
 - `GET /runs/{run_id}` — run configuration snapshot, aggregate progress and state.
 - `GET /runs/{run_id}/samples` — paginated per-sample results.
 - `POST /runs/{run_id}/cancel` — request cooperative cancellation.
@@ -39,7 +40,7 @@ The API is asynchronous for batch execution. Idempotency key on run creation pre
 ## Data model (logical)
 
 - `DatasetSnapshot`: dataset ID, source/revision, split, license/terms reference, manifest checksum, language/locale, created time.
-- `EvaluationRun`: ID, idempotency key, dataset snapshot, scoring profile/version, immutable provider/config snapshots, concurrency, repeat index, state, timestamps, cancellation state.
+- `EvaluationRun`: ID, idempotency key, dataset snapshot, batch/streaming track, scoring profile/version, immutable provider/config snapshots, replay pacing where applicable, concurrency, repeat index, state, timestamps, cancellation state.
 - `EvaluationSample`: run ID + stable sample ID, audio checksum/duration/tags, state, attempt count, timestamps, error category.
 - `ProviderAttempt`: sample/run/provider/model, exact options, request ID, event timestamps, retry number, usage/price snapshot, error and raw-response artifact reference.
 - `TranscriptResult`: raw text, normalized text/profile version, optional segment/timing/confidence payload, reference text, metric counts/rates.

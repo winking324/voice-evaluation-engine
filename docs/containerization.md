@@ -27,14 +27,14 @@ Planned services:
 - `db`: PostgreSQL with a health check and a project-scoped named volume. No host port is published by default; optional local inspection binds only to `127.0.0.1`.
 - `redis`: omitted from the MVP default stack; enabled only in a scale profile if a broker is later selected.
 
-The web UI reaches the API over the Compose network. Browser-facing ports bind to loopback by default. Database credentials and provider keys are injected as environment variables at runtime; they are never copied into an image layer.
+The browser itself cannot resolve Compose service names. The UI therefore uses relative `/api` URLs: the Vite dev server proxies API/SSE paths to `http://api:8000` from inside the web container, and the production web server reverse-proxies those paths to the API service. Browser-facing ports bind to loopback by default. The API port need not be published to the host except for optional local debugging, also bound to loopback. Database credentials and provider keys are injected as environment variables at runtime; they are never copied into an image layer.
 
 ## Isolation rules
 
 1. **No host dependency installation.** Build and run commands use containers (`docker compose run/exec`); do not require `pip install`, global Python packages, npm global packages, or a host database.
-2. **Project-specific Compose namespace.** Set a stable Compose project name such as `voice-eval-dev`. Compose prefixes named volumes and networks with this name so they do not collide with other projects.
+2. **Project-specific Compose namespace.** Set a stable Compose project name such as `voice-eval-dev`. Compose prefixes named volumes and networks with this name so they do not collide with other projects. Do not set a global explicit `name:` or `external: true` on development/test volumes or networks; either can bypass project scoping.
 3. **Keep datasets outside images.** Hugging Face cache uses a named volume such as `hf_cache`; private/local audio is supplied from `./data/raw` as a read-only bind mount when needed. Images must not contain datasets, runs, secrets, or local database files.
-4. **Separate disposable test state.** Integration tests use a distinct Compose project name (for example `voice-eval-test`) and a fresh PostgreSQL service/volume. The test command uses `--rm` for one-off containers. Cleanup targets only that named test project. Never run volume deletion against the development project as a generic cleanup step.
+4. **Separate disposable test state.** Integration tests use a distinct Compose project name (for example `voice-eval-test`) and a fresh PostgreSQL service/volume. Test services wait for the database health check before running migrations/tests. The default test network is internal with no external egress; any live-provider smoke test uses a separate opt-in profile/network. The test command uses `--rm` for one-off containers. Cleanup targets only that named test project. Never run volume deletion against the development project as a generic cleanup step.
 5. **Artifacts are explicit.** Evaluation outputs use an ignored `./data/runs` bind mount or a named volume with an explicit export command. Do not write generated files into arbitrary host paths.
 6. **Credentials remain local.** Developers copy `.env.example` to ignored `.env`. Compose reads it at runtime; `.env` is excluded from Git and Docker build contexts. CI uses its secret store. Avoid `docker compose config` output in logs if it may interpolate secrets.
 7. **No privileged container access.** Do not mount `/var/run/docker.sock`, use host networking, or run privileged containers. Use non-root users and only the capabilities and writable paths the service needs.
@@ -46,11 +46,13 @@ Dockerfile.api              # Python API/worker image; same package, different c
 Dockerfile.web              # Node build stage and minimal static serving stage
 compose.yaml                # dev stack, health checks, project-scoped named volumes
 compose.test.yaml           # isolated test DB and test command, no third-party calls by default
+uv.lock                     # resolved Python dependency versions for repeatable builds
+web/package-lock.json       # resolved frontend dependency versions for npm ci
 .dockerignore               # excludes secrets, VCS, local data, caches and build artifacts
 web/.dockerignore           # excludes frontend secrets, node_modules and build output
 ```
 
-The API image should use a small supported Python base, install pinned project dependencies from the lock/build metadata, run as a non-root user, and use a health check. API and worker can share the same image to avoid dependency drift. The web production image should contain only built static assets and its serving process. For development, source bind mounts and hot reload are acceptable, but dependency directories remain inside the container or a named volume rather than replacing host directories.
+The API image should use a supported, explicitly version-pinned Python base, install dependencies from `uv.lock` in locked mode, include required audio tools such as FFmpeg inside the image, run as a non-root user, and use a health check. API and worker can share the same image to avoid dependency drift. Pin the PostgreSQL major version and upgrade it intentionally; do not use floating `latest` image tags. The web production image should use a pinned Node build image and contain only built static assets plus its minimal serving process. Use `npm ci` against the committed package lock. For development, source bind mounts and hot reload are acceptable, but dependency directories remain inside the container or a named volume rather than replacing host directories.
 
 ## Data and volume plan
 
@@ -82,13 +84,13 @@ docker compose -p voice-eval-dev down
 docker compose -p voice-eval-test -f compose.yaml -f compose.test.yaml down --volumes --remove-orphans
 ```
 
-The test project must use a different database name, network and volume namespace from development. The routine stop command does not delete volumes. The destructive test cleanup is explicit and scoped to `voice-eval-test`; no `down --volumes` command should target the dev project by default.
+The test project must use a different database name, network and volume namespace from development. The test container depends on `db` with `condition: service_healthy`, and test-only networks are marked `internal: true` so mocked tests cannot accidentally call external providers. The routine stop command does not delete volumes. The destructive test cleanup is explicit and scoped to `voice-eval-test`; no `down --volumes` command should target the dev project by default.
 
 ## Test layers in containers
 
 - Unit tests run in the API image/test target without network access to third-party APIs.
 - Provider adapter contract tests use recorded/mocked responses and fake clocks; they do not consume API quota or send audio.
-- Integration tests start a clean PostgreSQL container and exercise API/worker state transitions.
+- Integration tests start a clean PostgreSQL container, wait for its health check, apply migrations, and exercise API/worker state transitions.
 - Optional live smoke tests require explicit provider credentials and a tiny approved sample set; isolate them behind a separate Compose profile and make provider charges/data egress visible before execution.
 - Performance/latency benchmarks run in a documented container resource profile. Capture CPU/memory limits, host CPU architecture, Docker runtime, concurrency and region. Container timing is client-observed and must not be presented as vendor-internal latency.
 

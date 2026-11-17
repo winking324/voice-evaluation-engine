@@ -2,9 +2,9 @@
 
 ## Concurrency model
 
-The workload is primarily I/O-bound provider requests, so Python `asyncio` is appropriate when provider clients support nonblocking I/O. Wrap each provider with a semaphore/token bucket to enforce its concurrency and request-rate limits. Also cap global concurrency and queued work. If an SDK is synchronous, run calls in a bounded thread pool; do not block the event loop. CPU-heavy resampling/noise mixing belongs in a process worker or separate preprocessing phase.
+The workload is primarily I/O-bound provider requests, so Python `asyncio` is appropriate when provider clients support nonblocking I/O. Wrap each provider with a semaphore/token bucket to enforce its concurrency and request-rate limits. Also cap global concurrency, queued runs, per-run sample count, and total submitted audio duration/bytes. When capacity is exhausted, reject new run submissions with a documented 429/503 response and retry guidance rather than accepting an unbounded backlog. If an SDK is synchronous, run calls in a bounded thread pool; do not block the event loop. CPU-heavy resampling/noise mixing belongs in a process worker or separate preprocessing phase.
 
-MVP can use a dedicated worker process polling PostgreSQL-backed sample jobs, with atomic claim/lease and bounded async task groups. This avoids coupling batch lifetime to an HTTP request and supports restart recovery. The local Compose stack also uses PostgreSQL so development and test behavior match the intended concurrent-worker model. This is acceptable at modest single-instance throughput, but requires careful claim/lease semantics and polling backoff. At higher QPS or multi-instance scale, use a durable broker (e.g. Redis + Celery/ARQ) and independently scale workers. Queue choice is an implementation decision after expected load and deployment environment are known; do not introduce broker operations before needed.
+MVP can use a dedicated worker process polling PostgreSQL-backed sample jobs, with short atomic claim transactions (for example `FOR UPDATE SKIP LOCKED`), a lease/heartbeat, and bounded async task groups. Never hold a database row lock while waiting on a provider. This avoids coupling batch lifetime to an HTTP request and supports restart recovery. The local Compose stack also uses PostgreSQL so development and test behavior match the intended concurrent-worker model. This is acceptable at modest single-instance throughput, but requires careful claim/lease semantics and polling backoff. At higher QPS or multi-instance scale, use a durable broker (e.g. Redis + Celery/ARQ) and independently scale workers. Queue choice is an implementation decision after expected load and deployment environment are known; do not introduce broker operations before needed.
 
 ## Job and retry semantics
 
@@ -14,6 +14,7 @@ MVP can use a dedicated worker process polling PostgreSQL-backed sample jobs, wi
 - Provider call may succeed remotely while worker loses response; exactly-once execution cannot be guaranteed. Use internal idempotency and make duplicate attempts visible; use provider idempotency only where explicitly supported.
 - A worker lease expires after crash; another worker may reclaim a sample. Keep attempt records to account for duplicate provider charges.
 - Cancellation is cooperative: stop scheduling new samples and cancel in-flight calls where supported, but record calls that completed despite cancellation.
+- A failed streaming attempt restarts the same sample from the beginning as a new attempt; do not splice partial transcript events from one session into another attempt's final result.
 
 ## Performance measurement controls
 

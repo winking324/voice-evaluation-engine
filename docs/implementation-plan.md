@@ -11,12 +11,15 @@
 ### Phase 1 — reproducible batch core
 
 - Python packaging/configuration, domain entities and migrations.
+- Resolve and commit Python/frontend dependency lockfiles; container builds use locked installs rather than floating dependency resolution.
 - Dockerfiles and Compose development stack for API, worker, web UI and PostgreSQL; no host Python/Node/database dependency installation.
 - Isolated Compose test project with disposable database state and mocked external provider calls by default.
 - Manifest dataset loader and one pinned public English baseline subset.
-- Provider interface and two adapters; secrets via environment; mocked adapter contract tests.
+- Separate batch/streaming provider contracts and at least two streaming-capable provider/model adapters, verified against current API docs; keep prerecorded batch results in a separate track.
+- Secrets via environment; mocked adapter contract tests for batch responses and streaming interim/final events.
 - Bounded asynchronous worker, run/sample state persistence and attempt-level timestamps.
 - Versioned English scoring profile, JiWER adapter, per-sample output and aggregate counts.
+- Controlled real-time audio replay with identical sample rate, chunking and pacing across streaming providers; record TTFT and post-audio finalization latency.
 - CLI or API-triggered 10-sample smoke run; include one deterministic noisy sample for pipeline demonstration.
 
 ### Phase 2 — web workflow and report
@@ -31,7 +34,7 @@
 
 - Add permissioned in-domain English dictation set and critical entities.
 - Add format-sensitive number/date/currency checks, noise/accent slices, confidence intervals and repeat protocol.
-- Add streaming provider path with separately defined TTFT/finalization metrics.
+- Add more streaming providers, long-running session cases and endpointing/chunking sensitivity analysis.
 
 ### Phase 4 — throughput and operations
 
@@ -55,7 +58,7 @@ These are not blockers for the scaffold or architecture. They are blockers for p
 |---|---|---|
 | Standardized interface for at least two services | Provider port and separate OpenAI/Deepgram adapters | Covered; vendor-specific options remain explicit |
 | Ground-truth accuracy and batch evaluation | Dataset manifest, WER/CER, sample-level scores and batch worker | Covered; 10 samples are smoke-only |
-| TTFT and total processing time | Streaming vs file API definitions; event timestamp capture and separate queue/request/end-to-end times | Covered without conflating incompatible timings |
+| TTFT and total processing time | Batch response latency and streaming TTFT/finalization use separate definitions; two streaming-capable configurations are required | Covered in Phase 1; batch-only runs are explicitly partial |
 | Leaderboard for accuracy, latency and cost | UI comparison dimensions, percentiles, cost provenance, configurable score | Covered; no opaque universal winner |
 | Scalable code structure | Domain/application/adapters split and proposed tree | Covered |
 | High-QPS bonus | Bounded concurrency now, durable broker/worker scaling later | Covered with realistic staged scope |
@@ -64,9 +67,12 @@ These are not blockers for the scaffold or architecture. They are blockers for p
 | Noisy sample demonstration | Deterministic noisy slice and noise metadata | Covered |
 | Simple UI | Dataset/configuration, progress, run results and exports | Covered |
 
+The first batch-only run is not, by itself, a complete success against the original real-time dictation objective. Full initial success requires the Phase 1 controlled streaming replay path and comparable TTFT/finalization metrics for at least two eligible provider/model configurations. If a selected provider has no comparable streaming transcription mode, report TTFT as unavailable for it and select another eligible configuration for the real-time track rather than substituting a batch-response time.
+
 ## Review checklist before merge of implementation
 
 - [ ] Every run pins dataset revision, sample IDs, provider model/options, normalization version, metric library version, and cost source.
+- [ ] Latency percentile estimator is fixed/versioned; sample counts and failures are reported with p50/p95.
 - [ ] Raw text and event timestamps are retained; normalized results are derived, versioned outputs.
 - [ ] The same normalization profile is applied to reference and all hypotheses; ambiguous numeric/date cases are not silently rewritten.
 - [ ] No file endpoint is mislabeled as TTFT; streaming interim and final timings are separate.

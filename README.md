@@ -7,8 +7,8 @@ This repository is currently at the design and scaffold stage. See [the design i
 ## Intended first benchmark
 
 - Use case: English personal dictation.
-- Initial provider adapters: OpenAI and Deepgram, behind a provider-neutral interface.
-- Initial mode: prerecorded audio batch evaluation. Streaming latency is a separately defined follow-up track.
+- Initial provider candidates: OpenAI and Deepgram, behind provider-neutral batch and streaming interfaces where each API/model supports the capability.
+- Evaluation tracks: prerecorded batch requests plus controlled real-time replay for measuring TTFT. Keep batch response latency and streaming TTFT in separate result tracks.
 - Initial UI: a small web app for dataset/configuration selection, progress, and run comparison.
 
 ## Principles

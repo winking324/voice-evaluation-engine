@@ -16,7 +16,7 @@ These documents define the first implementation before code is added. The agreed
 
 ## Decision summary
 
-- Backend: Python, FastAPI, Pydantic, SQLAlchemy/Alembic; provider calls are asynchronous where supported and bounded by per-provider concurrency limits.
+- Backend: Python, FastAPI, Pydantic, SQLAlchemy/Alembic; batch and streaming provider calls use separate contracts, are asynchronous where supported, and are bounded by per-provider concurrency limits.
 - Frontend: React + TypeScript + Vite. The UI is a thin client over a versioned API.
 - Initial persistence: PostgreSQL in the local Compose stack and as the shared/deployable target. SQLite is not the default runtime because it cannot represent the intended concurrent worker behavior.
 - Local development and validation: Docker Compose is the supported runtime; Python/Node dependencies and PostgreSQL run in containers, with isolated project-scoped volumes.
