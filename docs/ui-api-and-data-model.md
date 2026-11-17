@@ -46,7 +46,7 @@ The API is asynchronous for batch execution. Idempotency key on run creation pre
 - `TranscriptResult`: raw text, normalized text/profile version, optional segment/timing/confidence payload, reference text, metric counts/rates.
 - `MetricAggregate`: run/provider/profile, denominators/counts, percentiles, coverage, failures, cost sum and uncertainty metadata.
 
-Use foreign keys and uniqueness constraints for run/sample/provider/repeat identity. Store state transitions explicitly. Derived metrics are rebuildable from retained raw results and a pinned metric version. Avoid storing secrets in run snapshots; record a credential alias/tenant identifier only if operationally needed.
+Use foreign keys and uniqueness constraints for run/sample/provider/repeat identity in the SQLite MVP. Keep schema/repository boundaries portable enough for a later PostgreSQL migration if measured scaling requires it. Store state transitions explicitly. Derived metrics are rebuildable from retained raw results and a pinned metric version. Avoid storing secrets in run snapshots; record a credential alias/tenant identifier only if operationally needed.
 
 ## Progress delivery
 

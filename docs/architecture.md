@@ -1,58 +1,52 @@
 # Architecture and repository structure
 
-## High-level design
+## MVP topology
 
 ```text
-React UI ── HTTP API / progress stream ── FastAPI
-                                            │
-                             ┌──────────────┴──────────────┐
-                             │ Run orchestration + database │
-                             └──────────────┬──────────────┘
-                                            │ bounded work queue
-                                      Evaluation workers
-                                     ┌──────┴──────┐
-                                Dataset loader  Provider adapters
-                                     │                │
-                                Audio storage      STT vendors
-                                     └──────┬─────────┘
-                                   Scoring + reporting
+Browser ── same-origin HTTP/SSE ── single app process
+                                    ├── FastAPI API
+                                    ├── built React UI
+                                    ├── bounded asyncio run workers
+                                    ├── SQLite (persistent local queue/results)
+                                    ├── dataset loader / scoring
+                                    └── batch + streaming STT provider adapters
 ```
 
-The API validates and persists a run request, returns a run ID, and exposes status/results. Workers own long-running provider calls; HTTP request lifetimes must not own an entire batch. The first deployment can use one API process and one worker process. Later, worker replicas can scale independently.
+The API validates a run request, snapshots its configuration, persists the job, and returns a run ID. A bounded worker pool in the same process performs provider calls and persists progress and results; request lifetimes do not own a batch. The process serves the UI and API from one origin. The default local app is a single instance with a SQLite database on a named volume.
 
-For local development and validation, run the API, worker, web UI and PostgreSQL through Docker Compose. Runtime dependencies stay inside images; dataset cache, test database state and run artifacts use named volumes or explicitly mounted project directories. See [containerized development and testing](containerization.md).
+This deployment intentionally favors simple personal use while preserving run state across ordinary restarts. SQLite and in-process workers do not provide multi-instance coordination or horizontal scaling. Keep the boundaries behind repositories and worker interfaces so a measured scale need can introduce PostgreSQL and a separate worker/broker later without changing provider or scoring contracts.
+
+For local development and validation, run the app and its tests through Docker Compose. Runtime dependencies stay inside the image; SQLite state, dataset caches and run artifacts use project-scoped volumes or explicit host mounts. See [containerized development and testing](containerization.md).
 
 ## Proposed repository tree
 
 ```text
 .
 ├── docs/                         # Product, architecture, metrics, API and ops design
-├── Dockerfile.api                # Planned API/worker image, shared runtime layer
-├── Dockerfile.web                # Planned web development/production image
-├── compose.yaml                  # Planned local app + worker + database + web stack
-├── compose.test.yaml             # Planned disposable test stack/profile
+├── Dockerfile                    # Multi-stage UI build and Python application image
+├── compose.yaml                  # Single app service with project-scoped volumes
+├── compose.test.yaml             # Isolated, non-live test command
 ├── src/voice_eval/
-│   ├── api/                      # FastAPI routers, request/response schemas, auth boundary
+│   ├── api/                      # FastAPI routers, request/response schemas
 │   ├── application/              # Use cases: create/cancel/run evaluation, compare runs
-│   ├── domain/                   # Provider-neutral entities, status transitions, metric contracts
+│   ├── domain/                   # Provider-neutral entities, state and metric contracts
 │   ├── providers/                # Provider interface, OpenAI adapter, Deepgram adapter
 │   ├── datasets/                 # HF/local manifest readers, validation, audio metadata
 │   ├── evaluation/               # Normalizers, WER/CER, latency/cost aggregation, ranking
-│   ├── workers/                  # Claim/execute samples, concurrency and retry policies
-│   ├── persistence/              # SQLAlchemy models, repositories, migrations
-│   ├── storage/                  # Local/object storage abstraction for permitted audio/artifacts
-│   └── config.py                 # Typed configuration; secrets come from environment/secret store
-├── web/                          # React + TypeScript UI
-├── migrations/                   # Alembic database migrations
+│   ├── workers/                  # In-process bounded workers, retries and cancellation
+│   ├── persistence/              # SQLite models, repositories and migrations as needed
+│   ├── storage/                  # Local storage abstraction for permitted audio/artifacts
+│   └── config.py                 # Typed configuration; secrets come from environment
+├── web/                          # React + TypeScript UI; built into the app image
 ├── data/
 │   ├── manifests/                # Small, redistributable metadata examples only
-│   ├── raw/                      # Ignored local datasets/audio
+│   ├── raw/                      # Ignored local datasets/audio when copied locally
 │   ├── cache/                    # Ignored HF/audio cache
 │   └── runs/                     # Ignored local run artifacts
 ├── tests/
 │   ├── unit/                     # Normalization, metrics, state, policy tests
-│   ├── contract/                 # Provider request/response adapter contract tests (mocked)
-│   └── integration/              # DB/API/worker flows; external calls opt-in
+│   ├── contract/                 # Provider request/response adapter tests (mocked)
+│   └── integration/              # SQLite/API/worker flows; external calls opt-in
 ├── scripts/                      # Dataset checks, local run/export helpers
 ├── pyproject.toml
 ├── .env.example
@@ -60,21 +54,24 @@ For local development and validation, run the API, worker, web UI and PostgreSQL
 └── README.md
 ```
 
-The scaffold phase creates these directories and documentation only; implementation can add files as each module is built. Container files are planned for the first implementation phase. `domain` must not import vendor SDKs, FastAPI or persistence details. `application` orchestrates ports; adapters implement those ports. This dependency direction keeps scoring and run state deterministic and vendor-neutral.
+The scaffold phase creates repository directories and design docs; implementation adds files as modules are built. `domain` must not import vendor SDKs, FastAPI, or persistence details. `application` orchestrates ports; adapters implement those ports. This dependency direction keeps scoring and run state deterministic and vendor-neutral.
 
 ## Core boundaries
 
-- **API**: parse and validate user intent, enforce file/config limits, provide run state and result views. It does not call providers inline.
+- **API**: validate user intent, enforce limits, expose run state and results. It does not await an entire batch inline.
 - **Application**: creates immutable run snapshots, schedules samples, drives state transitions, and coordinates cancellation.
-- **Provider port**: accepts an audio source plus normalized request options and returns a standard provider result or typed error.
+- **Provider port**: accepts audio plus normalized request options and returns a standard provider result or typed error.
 - **Dataset port**: resolves a pinned dataset split into stable sample records. It never silently moves a dataset revision.
 - **Evaluation**: pure functions from raw reference/hypothesis and a versioned profile to score records; aggregation is independent of the UI.
 - **Persistence**: stores inputs, states, raw outputs and derived metrics. Run inputs and raw outputs are append-only; recalculation writes a new metric version.
-- **Frontend**: submits run configuration, subscribes/polls progress, renders raw and aggregate evidence. It does not calculate authoritative metrics.
+- **Worker**: claims persisted jobs in the single app process, applies bounded concurrency and updates progress without holding database transactions across provider calls.
+- **Frontend**: submits run configuration, subscribes/polls progress, and renders raw and aggregate evidence. It does not calculate authoritative metrics.
 
 ## Persistence and artifact strategy
 
-Use PostgreSQL in the Compose development/test stacks and shared deployments so local behavior matches the intended concurrent-worker model. SQLite may be used for isolated unit-level experiments, but not as the supported app runtime. Store large audio outside relational rows; persist an opaque storage URI, checksum, format metadata and access policy. Keep provider responses and per-sample JSON artifacts with retention configurable. Public dataset audio should be fetched/cache-managed, not copied into the repository.
+Use SQLite in WAL mode for the personal single-instance MVP, stored on a project-scoped Docker named volume. Keep database transactions short, configure a busy timeout, and do not use multiple API processes or containers against the same queue. Treat source audio as external or read-only mounted data; persist its relative storage key, checksum, format metadata and access policy rather than copying large audio into relational rows. Keep provider responses and per-sample artifacts minimal and retention configurable. Public dataset audio should be fetched/cache-managed or mounted, not copied into the repository.
+
+If measured queueing or write contention requires multiple instances, move shared state to PostgreSQL and run independent workers through a durable queue; do this as a deliberate later scale step, not as an MVP dependency.
 
 ## Architectural references
 
