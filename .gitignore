@@ -1,0 +1,27 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.coverage
+htmlcov/
+.DS_Store
+
+# Local benchmark audio, downloaded datasets, and generated artifacts
+/data/raw/
+/data/cache/
+/data/runs/
+/artifacts/
+
+# Frontend dependencies and build output
+/web/node_modules/
+/web/dist/
+/web/.vite/
