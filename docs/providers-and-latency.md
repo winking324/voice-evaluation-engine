@@ -35,7 +35,7 @@ Define a separate `StreamingSpeechToTextProvider` capability for opening a sessi
 
 ## Timing definitions
 
-Use a monotonic high-resolution clock for durations inside a provider attempt and database-generated UTC timestamps for cross-process lifecycle events. Persist UTC event times for audit plus monotonic elapsed offsets/durations scoped to one provider attempt. Never persist a raw monotonic clock reading as an absolute timestamp or subtract application-container wall clocks to calculate latency; wall clocks can jump, and monotonic clock origins are process/host-specific. Generate enqueue/start/completion lifecycle timestamps from the same PostgreSQL server clock. Record:
+Use a monotonic high-resolution clock for durations inside a provider attempt. Persist UTC event timestamps for audit and attempt-scoped monotonic elapsed offsets for precise latency. Never persist a raw monotonic clock reading as an absolute timestamp or subtract monotonic values from different attempts/processes; origins are process-specific. The single-process SQLite MVP may use database-generated UTC timestamps for audit, but those timestamps are wall-clock values, not precision latency measures. Record:
 
 - UTC audit times for `enqueued_at`, `worker_started_at`, `request_started_at`, `session_connected_at`, `first_audio_frame_sent_at`, `last_audio_frame_sent_at`, `first_response_at`, `first_nonempty_transcript_at`, and `final_response_at` where observable;
 - monotonic elapsed offsets from `request_started`, tagged with the attempt ID and clock domain;
@@ -44,15 +44,15 @@ Use a monotonic high-resolution clock for durations inside a provider attempt an
 
 Derived metrics:
 
-- queue wait = database timestamp at worker claim − database timestamp at enqueue (cross-process lifecycle latency; retain the wall-clock caveat);
+- queue wait within one process = monotonic worker-claim offset − monotonic enqueue offset; after a process restart, use UTC timestamps only as a wall-clock estimate and label it accordingly;
 - client-observed request total = monotonic final-response offset − monotonic request-start offset (includes upload/network/client processing);
 - time to first transport byte/event = first event − request start, only when the HTTP/streaming client exposes that event;
 - request-to-first-transcript = first transcript − request start (useful service/session metric, but not dictation TTFT when audio streaming starts later);
-- end-to-end sample latency = database timestamp at final completion − database timestamp at enqueue (cross-process lifecycle latency; retain the wall-clock caveat);
+- end-to-end sample latency within one process = monotonic completion offset − monotonic enqueue offset; if the run spans an app restart, use UTC timestamps only as a wall-clock estimate;
 - batch real-time factor = client-observed request total (monotonic request start to complete response, including upload/network) / audio duration;
 - streaming reports TTFT, post-audio finalization, and stream wall time separately; do not rank streaming by batch real-time factor because the controlled replay deliberately includes real-time audio playback.
 
-Queue wait and end-to-end lifecycle durations use the database clock to avoid host/container clock skew between API and worker processes; they remain wall-clock-derived and can be affected by a database host clock adjustment. Provider request, stream, and real-time factor durations use the worker's monotonic clock and are the precision latency measurements. Keep these metric classes labeled separately.
+The MVP has one process and one SQLite database, so queue wait can use a monotonic clock while the process remains alive. A recovered run may cross a restart and therefore has no comparable monotonic origin; use persisted UTC audit timestamps as an approximate wall-clock duration and mark the clock basis. Provider request, stream, and real-time factor durations always use one attempt's monotonic clock and are the precision latency measurements. Keep these metric classes labeled separately.
 
 For controlled streaming replay, take all offsets from one attempt-scoped monotonic clock. Measure session setup separately from request start to session-open completion. Start the audio-playback origin at the first successfully dispatched audio-frame send (the offset is captured immediately before calling `send_audio`, and retained only if that call succeeds). Replay the same ordered frames and frame-duration schedule for each provider. TTFT is the first nonempty transcript event (interim or final) received after this origin minus the first-frame offset. Also report first-final-transcript latency (the first nonempty event with `is_final=true`).
 
