@@ -43,8 +43,8 @@ class TranscriptScore:
 
 @dataclass(frozen=True, slots=True)
 class AggregateScore:
-    profile_id: str
-    profile_version: str
+    profile_id: str | None
+    profile_version: str | None
     sample_count: int
     words: EditCounts
     wer: float | None
@@ -88,19 +88,23 @@ def score_transcript(
     )
 
 
-def aggregate_scores(scores: Iterable[TranscriptScore]) -> AggregateScore:
+def aggregate_scores(
+    scores: Iterable[TranscriptScore],
+    profile: NormalizationProfile | None = None,
+) -> AggregateScore:
     """Aggregate corpus counts, weighting every sample by its reference size.
 
     Empty-reference samples contribute insertions to the corpus numerator but
     zero words to the denominator. Scores from different normalization
-    profiles cannot be mixed.
+    profiles cannot be mixed. For an empty collection, profile metadata is
+    unknown unless the caller supplies the run's configured profile.
     """
 
     items = tuple(scores)
     if not items:
         return AggregateScore(
-            profile_id=ENGLISH_LEXICAL_V1.profile_id,
-            profile_version=ENGLISH_LEXICAL_V1.version,
+            profile_id=profile.profile_id if profile is not None else None,
+            profile_version=profile.version if profile is not None else None,
             sample_count=0,
             words=EditCounts(0, 0, 0, 0, 0),
             wer=None,
@@ -108,15 +112,17 @@ def aggregate_scores(scores: Iterable[TranscriptScore]) -> AggregateScore:
             cer=None,
         )
 
-    profile = (items[0].profile_id, items[0].profile_version)
-    if any((item.profile_id, item.profile_version) != profile for item in items[1:]):
+    score_profile = (items[0].profile_id, items[0].profile_version)
+    if any((item.profile_id, item.profile_version) != score_profile for item in items[1:]):
         raise ValueError("cannot aggregate scores from different normalization profiles")
+    if profile is not None and (profile.profile_id, profile.version) != score_profile:
+        raise ValueError("provided profile does not match transcript scores")
 
     words = _sum_counts(item.words for item in items)
     characters = _sum_counts(item.characters for item in items)
     return AggregateScore(
-        profile_id=profile[0],
-        profile_version=profile[1],
+        profile_id=score_profile[0],
+        profile_version=score_profile[1],
         sample_count=len(items),
         words=words,
         wer=_rate(words.errors, words.reference_units),

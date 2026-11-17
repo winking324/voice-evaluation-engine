@@ -1,6 +1,6 @@
 import pytest
 
-from voice_eval.evaluation.normalization import RAW_TEXT_V1
+from voice_eval.evaluation.normalization import ENGLISH_LEXICAL_V1, RAW_TEXT_V1
 from voice_eval.evaluation.scoring import aggregate_scores, score_transcript
 
 
@@ -100,12 +100,29 @@ def test_cannot_aggregate_different_profiles() -> None:
         aggregate_scores([normalized, raw])
 
 
-def test_empty_aggregate_is_explicitly_undefined() -> None:
+def test_explicit_profile_must_match_nonempty_scores() -> None:
+    raw = score_transcript("A", "a", profile=RAW_TEXT_V1)
+
+    with pytest.raises(ValueError, match="provided profile does not match"):
+        aggregate_scores([raw], profile=ENGLISH_LEXICAL_V1)
+
+
+def test_empty_aggregate_does_not_claim_a_profile_by_default() -> None:
     aggregate = aggregate_scores([])
 
     assert aggregate.sample_count == 0
     assert aggregate.wer is None
     assert aggregate.cer is None
+    assert aggregate.profile_id is None
+    assert aggregate.profile_version is None
+
+
+def test_empty_aggregate_uses_explicit_run_profile_when_available() -> None:
+    aggregate = aggregate_scores([], profile=RAW_TEXT_V1)
+
+    assert aggregate.sample_count == 0
+    assert aggregate.profile_id == RAW_TEXT_V1.profile_id
+    assert aggregate.profile_version == RAW_TEXT_V1.version
 
 
 def test_profile_is_applied_symmetrically_to_reference_and_hypothesis() -> None:
