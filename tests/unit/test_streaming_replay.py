@@ -81,7 +81,11 @@ class FakeSession:
         if delay_ms is None:
             return
         await self.clock.sleep(delay_ms / 1000)
-        self.queue.put_nowait(StreamingTranscriptEvent(text="", is_final=True, is_terminal=True))
+        self.queue.put_nowait(
+            StreamingTranscriptEvent(
+                text="", is_final=True, is_terminal=True, request_id="fake-request"
+            )
+        )
 
     async def events(self) -> AsyncIterator[StreamingTranscriptEvent]:
         while True:
@@ -142,6 +146,7 @@ def test_replay_uses_attempt_monotonic_offsets_and_explicit_terminal_event() -> 
         assert result.first_final_transcript_ms == 12
         assert result.input_sealed_offset_ms == 25
         assert result.terminal_transcript_offset_ms == 30
+        assert result.terminal_request_id == "fake-request"
         assert result.post_audio_finalization_ms == 5
         assert result.terminal_before_input_sealed is False
         assert result.stream_wall_time_ms == 28

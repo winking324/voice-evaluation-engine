@@ -134,6 +134,7 @@ class StreamingTranscriptEvent(ContractModel):
     is_final: bool
     speech_final: bool | None = None
     is_terminal: bool = False
+    request_id: str | None = None
     start_ms: int | None = Field(default=None, ge=0)
     end_ms: int | None = Field(default=None, ge=0)
     confidence: float | None = Field(default=None, ge=0, le=1)
