@@ -55,6 +55,7 @@ class StreamingReplayResult:
     first_nonempty_transcript_offset_ms: float | None
     first_final_transcript_offset_ms: float | None
     terminal_transcript_offset_ms: float
+    terminal_request_id: str | None
     ttft_ms: float | None
     first_final_transcript_ms: float | None
     post_audio_finalization_ms: float
@@ -214,6 +215,7 @@ async def replay_stream(
             first_nonempty_transcript_offset_ms=first_nonempty_offset_ms,
             first_final_transcript_offset_ms=first_final_offset_ms,
             terminal_transcript_offset_ms=terminal_offset_ms,
+            terminal_request_id=terminal_event.event.request_id,
             ttft_ms=(first_nonempty_offset_ms - first_frame_offset_ms)
             if first_nonempty_offset_ms is not None
             else None,

@@ -19,7 +19,11 @@ from voice_eval.domain.contracts import (
     TranscriptionResult,
     TranscriptionSegment,
 )
-from voice_eval.providers._http import map_connection_error, map_http_error
+from voice_eval.providers._http import (
+    map_connection_error,
+    map_http_error,
+    websocket_request_id,
+)
 from voice_eval.providers.audio import AudioLoader
 from voice_eval.providers.errors import ProviderError, ProviderErrorCode
 from voice_eval.providers.protocols import BatchSpeechToTextProvider, StreamingSpeechToTextProvider
@@ -240,10 +244,11 @@ class DeepgramStreamingProvider(StreamingSpeechToTextProvider):
 
 
 class DeepgramStreamingSession:
-    def __init__(self, socket: Any) -> None:
+    def __init__(self, socket: Any, request_id: str | None = None) -> None:
         self._socket = socket
         self._closed = False
         self._finish_requested = False
+        self._request_id = request_id or websocket_request_id(socket, "dg-request-id")
 
     async def send_audio(self, frame: AudioFrame) -> None:
         try:
@@ -254,6 +259,7 @@ class DeepgramStreamingSession:
                 "Deepgram streaming send failed",
                 retryable=True,
                 provider_id="deepgram",
+                request_id=self._request_id,
             ) from exc
 
     async def finish_audio(self) -> None:
@@ -267,76 +273,124 @@ class DeepgramStreamingSession:
                 "Deepgram could not finalize the audio stream",
                 retryable=True,
                 provider_id="deepgram",
+                request_id=self._request_id,
             ) from exc
 
     async def events(self) -> AsyncIterator[StreamingTranscriptEvent]:
-        async for message in self._socket:
-            if not isinstance(message, str):
-                continue
-            try:
-                payload = json.loads(message)
-            except json.JSONDecodeError:
-                continue
-            if payload.get("type") == "Error":
+        try:
+            async for message in self._socket:
+                if not isinstance(message, str):
+                    raise ProviderError(
+                        ProviderErrorCode.UNKNOWN,
+                        "Deepgram returned a non-text control event",
+                        retryable=False,
+                        provider_id="deepgram",
+                        request_id=self._request_id,
+                    )
+                try:
+                    payload = json.loads(message)
+                except (json.JSONDecodeError, TypeError) as exc:
+                    raise ProviderError(
+                        ProviderErrorCode.UNKNOWN,
+                        "Deepgram returned malformed event data",
+                        retryable=False,
+                        provider_id="deepgram",
+                        request_id=self._request_id,
+                    ) from exc
+                if not isinstance(payload, dict):
+                    raise ProviderError(
+                        ProviderErrorCode.UNKNOWN,
+                        "Deepgram returned an invalid event",
+                        retryable=False,
+                        provider_id="deepgram",
+                        request_id=self._request_id,
+                    )
+                request_id = payload.get("request_id")
+                if isinstance(request_id, str):
+                    self._request_id = request_id
+                if payload.get("type") == "Metadata":
+                    continue
+                if payload.get("type") == "Error":
+                    raise ProviderError(
+                        ProviderErrorCode.UNKNOWN,
+                        "Deepgram streaming transcription failed",
+                        retryable=True,
+                        provider_id="deepgram",
+                        request_id=self._request_id,
+                    )
+                if payload.get("type") != "Results":
+                    continue
+                channel_data = payload.get("channel")
+                alternatives = (
+                    channel_data.get("alternatives") if isinstance(channel_data, dict) else None
+                )
+                channel = (
+                    alternatives[0] if isinstance(alternatives, list) and alternatives else None
+                )
+                if not isinstance(channel, dict) or not isinstance(
+                    channel.get("transcript", ""), str
+                ):
+                    raise ProviderError(
+                        ProviderErrorCode.UNKNOWN,
+                        "Deepgram stream returned a malformed transcript event",
+                        retryable=False,
+                        provider_id="deepgram",
+                        request_id=self._request_id,
+                    )
+                is_final = payload.get("is_final")
+                speech_final = payload.get("speech_final")
+                if not isinstance(is_final, bool) or (
+                    speech_final is not None and not isinstance(speech_final, bool)
+                ):
+                    raise ProviderError(
+                        ProviderErrorCode.UNKNOWN,
+                        "Deepgram stream returned invalid finalization flags",
+                        retryable=False,
+                        provider_id="deepgram",
+                        request_id=self._request_id,
+                    )
+                start = payload.get("start")
+                duration = payload.get("duration")
+                start_ms = round(start * 1000) if isinstance(start, int | float) else None
+                end_ms = (
+                    round((start + duration) * 1000)
+                    if isinstance(start, int | float) and isinstance(duration, int | float)
+                    else None
+                )
+                yield StreamingTranscriptEvent(
+                    text=channel.get("transcript", ""),
+                    is_final=is_final,
+                    speech_final=speech_final,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    confidence=(
+                        channel.get("confidence")
+                        if isinstance(channel.get("confidence"), int | float)
+                        else None
+                    ),
+                )
+            if not self._finish_requested:
                 raise ProviderError(
                     ProviderErrorCode.UNKNOWN,
-                    "Deepgram streaming transcription failed",
+                    "Deepgram closed the stream before input was finalized",
                     retryable=True,
                     provider_id="deepgram",
+                    request_id=self._request_id,
                 )
-            if payload.get("type") != "Results":
-                continue
-            channel_data = payload.get("channel")
-            alternatives = (
-                channel_data.get("alternatives") if isinstance(channel_data, dict) else None
-            )
-            channel = alternatives[0] if isinstance(alternatives, list) and alternatives else None
-            if not isinstance(channel, dict) or not isinstance(channel.get("transcript", ""), str):
-                raise ProviderError(
-                    ProviderErrorCode.UNKNOWN,
-                    "Deepgram stream returned a malformed transcript event",
-                    retryable=False,
-                    provider_id="deepgram",
-                )
-            is_final = payload.get("is_final")
-            speech_final = payload.get("speech_final")
-            if not isinstance(is_final, bool) or (
-                speech_final is not None and not isinstance(speech_final, bool)
-            ):
-                raise ProviderError(
-                    ProviderErrorCode.UNKNOWN,
-                    "Deepgram stream returned invalid finalization flags",
-                    retryable=False,
-                    provider_id="deepgram",
-                )
-            start = payload.get("start")
-            duration = payload.get("duration")
-            start_ms = round(start * 1000) if isinstance(start, int | float) else None
-            end_ms = (
-                round((start + duration) * 1000)
-                if start_ms is not None and isinstance(duration, int | float)
-                else None
-            )
             yield StreamingTranscriptEvent(
-                text=channel.get("transcript", ""),
-                is_final=is_final,
-                speech_final=speech_final,
-                start_ms=start_ms,
-                end_ms=end_ms,
-                confidence=(
-                    channel.get("confidence")
-                    if isinstance(channel.get("confidence"), int | float)
-                    else None
-                ),
+                text="", is_final=False, is_terminal=True, request_id=self._request_id
             )
-        if not self._finish_requested:
+        except ProviderError:
+            raise
+        except Exception as exc:
+            mapped = map_connection_error("deepgram", exc)
             raise ProviderError(
-                ProviderErrorCode.UNKNOWN,
-                "Deepgram closed the stream before input was finalized",
-                retryable=True,
+                mapped.code,
+                str(mapped),
+                retryable=mapped.retryable,
                 provider_id="deepgram",
-            )
-        yield StreamingTranscriptEvent(text="", is_final=False, is_terminal=True)
+                request_id=self._request_id or mapped.request_id,
+            ) from exc
 
     async def aclose(self) -> None:
         if not self._closed:

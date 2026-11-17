@@ -20,7 +20,11 @@ from voice_eval.domain.contracts import (
     TranscriptionResult,
     TranscriptionSegment,
 )
-from voice_eval.providers._http import map_connection_error, map_http_error
+from voice_eval.providers._http import (
+    map_connection_error,
+    map_http_error,
+    websocket_request_id,
+)
 from voice_eval.providers.audio import AudioLoader
 from voice_eval.providers.errors import ProviderError, ProviderErrorCode
 from voice_eval.providers.protocols import BatchSpeechToTextProvider, StreamingSpeechToTextProvider
@@ -235,7 +239,11 @@ class OpenAIRealtimeProvider(StreamingSpeechToTextProvider):
             )
         except Exception as exc:
             raise map_connection_error(self.provider_id, exc) from exc
-        session = OpenAIRealtimeSession(socket, interim_results=options.interim_results)
+        session = OpenAIRealtimeSession(
+            socket,
+            interim_results=options.interim_results,
+            request_id=websocket_request_id(socket, "x-request-id"),
+        )
         config: dict[str, Any] = {
             "type": "transcription",
             "audio": {
@@ -275,36 +283,76 @@ class OpenAIRealtimeProvider(StreamingSpeechToTextProvider):
                 retryable=False,
                 provider_id=self.provider_id,
             )
-        await session._send({"type": "session.update", "session": config})
         try:
+            await session._send({"type": "session.update", "session": config})
             while True:
-                event = json.loads(await asyncio.wait_for(socket.recv(), self._timeout_seconds))
+                raw_event = await asyncio.wait_for(socket.recv(), self._timeout_seconds)
+                try:
+                    event = json.loads(raw_event)
+                except (json.JSONDecodeError, TypeError) as exc:
+                    raise ProviderError(
+                        ProviderErrorCode.UNKNOWN,
+                        "OpenAI Realtime returned malformed setup data",
+                        retryable=False,
+                        provider_id=self.provider_id,
+                    ) from exc
+                if not isinstance(event, dict):
+                    raise ProviderError(
+                        ProviderErrorCode.UNKNOWN,
+                        "OpenAI Realtime returned an invalid setup event",
+                        retryable=False,
+                        provider_id=self.provider_id,
+                    )
                 if event.get("type") == "session.updated":
                     return session
                 if event.get("type") == "error":
-                    await session.aclose()
                     raise ProviderError(
                         ProviderErrorCode.INVALID_INPUT,
                         "OpenAI rejected the Realtime transcription session configuration",
                         retryable=False,
                         provider_id=self.provider_id,
+                        request_id=event.get("request_id"),
                     )
-        except TimeoutError as exc:
-            await session.aclose()
+        except asyncio.CancelledError:
+            try:
+                await session.aclose()
+            except Exception:
+                pass
+            raise
+        except Exception as exc:
+            try:
+                await session.aclose()
+            except Exception:
+                pass
+            if isinstance(exc, ProviderError):
+                if exc.request_id is not None or session._request_id is None:
+                    raise
+                raise ProviderError(
+                    exc.code,
+                    str(exc),
+                    retryable=exc.retryable,
+                    provider_id=self.provider_id,
+                    request_id=session._request_id,
+                ) from exc
+            mapped = map_connection_error(self.provider_id, exc)
             raise ProviderError(
-                ProviderErrorCode.TIMEOUT,
-                "OpenAI Realtime session setup timed out",
-                retryable=True,
+                mapped.code,
+                str(mapped),
+                retryable=mapped.retryable,
                 provider_id=self.provider_id,
+                request_id=session._request_id or mapped.request_id,
             ) from exc
 
 
 class OpenAIRealtimeSession:
-    def __init__(self, socket: Any, *, interim_results: bool) -> None:
+    def __init__(
+        self, socket: Any, *, interim_results: bool, request_id: str | None = None
+    ) -> None:
         self._socket = socket
         self._interim_results = interim_results
         self._closed = False
         self._finish_requested = False
+        self._request_id = request_id
 
     async def _send(self, payload: dict[str, Any]) -> None:
         try:
@@ -315,6 +363,7 @@ class OpenAIRealtimeSession:
                 "OpenAI Realtime send failed",
                 retryable=True,
                 provider_id="openai",
+                request_id=self._request_id,
             ) from exc
 
     async def send_audio(self, frame: AudioFrame) -> None:
@@ -334,29 +383,73 @@ class OpenAIRealtimeSession:
             raise
 
     async def events(self) -> AsyncIterator[StreamingTranscriptEvent]:
-        async for message in self._socket:
-            event = json.loads(message)
-            event_type = event.get("type")
-            if event_type == "conversation.item.input_audio_transcription.delta":
-                if not self._interim_results:
-                    continue
-                yield StreamingTranscriptEvent(
-                    segment_id=event.get("item_id"), text=event.get("delta", ""), is_final=False
-                )
-            elif event_type == "conversation.item.input_audio_transcription.completed":
-                yield StreamingTranscriptEvent(
-                    segment_id=event.get("item_id"),
-                    text=event.get("transcript", ""),
-                    is_final=True,
-                    is_terminal=self._finish_requested,
-                )
-            elif event_type in {"error", "conversation.item.input_audio_transcription.failed"}:
-                raise ProviderError(
-                    ProviderErrorCode.UNKNOWN,
-                    "OpenAI Realtime transcription failed",
-                    retryable=True,
-                    provider_id="openai",
-                )
+        try:
+            async for message in self._socket:
+                try:
+                    event = json.loads(message)
+                except (json.JSONDecodeError, TypeError) as exc:
+                    raise ProviderError(
+                        ProviderErrorCode.UNKNOWN,
+                        "OpenAI Realtime returned malformed event data",
+                        retryable=False,
+                        provider_id="openai",
+                        request_id=self._request_id,
+                    ) from exc
+                if not isinstance(event, dict):
+                    raise ProviderError(
+                        ProviderErrorCode.UNKNOWN,
+                        "OpenAI Realtime returned an invalid event",
+                        retryable=False,
+                        provider_id="openai",
+                        request_id=self._request_id,
+                    )
+                request_id = event.get("request_id")
+                if isinstance(request_id, str):
+                    self._request_id = request_id
+                event_type = event.get("type")
+                if event_type == "conversation.item.input_audio_transcription.delta":
+                    if not self._interim_results:
+                        continue
+                    yield StreamingTranscriptEvent(
+                        segment_id=event.get("item_id"), text=event.get("delta", ""), is_final=False
+                    )
+                elif event_type == "conversation.item.input_audio_transcription.completed":
+                    terminal = self._finish_requested
+                    yield StreamingTranscriptEvent(
+                        segment_id=event.get("item_id"),
+                        text=event.get("transcript", ""),
+                        is_final=True,
+                        is_terminal=terminal,
+                        request_id=self._request_id if terminal else None,
+                    )
+                    if terminal:
+                        return
+                elif event_type in {"error", "conversation.item.input_audio_transcription.failed"}:
+                    raise ProviderError(
+                        ProviderErrorCode.UNKNOWN,
+                        "OpenAI Realtime transcription failed",
+                        retryable=True,
+                        provider_id="openai",
+                        request_id=self._request_id,
+                    )
+            raise ProviderError(
+                ProviderErrorCode.UNKNOWN,
+                "OpenAI Realtime stream closed before terminal transcription",
+                retryable=True,
+                provider_id="openai",
+                request_id=self._request_id,
+            )
+        except ProviderError:
+            raise
+        except Exception as exc:
+            mapped = map_connection_error("openai", exc)
+            raise ProviderError(
+                mapped.code,
+                str(mapped),
+                retryable=mapped.retryable,
+                provider_id="openai",
+                request_id=self._request_id or mapped.request_id,
+            ) from exc
 
     async def aclose(self) -> None:
         if not self._closed:

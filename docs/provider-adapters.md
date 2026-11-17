@@ -13,7 +13,7 @@ OpenAI batch transcription uses the File transcription endpoint and returns a co
 
 Audio bytes are supplied through an injected trusted `AudioLoader`. Provider classes do not resolve storage keys or fetch arbitrary URLs. Inject an owned storage adapter that enforces the configured storage root boundary.
 
-Install the optional `providers` extra (`pip install -e '.[providers]'`) to use the streaming paths; batch paths use the existing `httpx` dependency. SDK/API calls have bounded request/connect timeouts, map HTTP failures to `ProviderError`, retain provider request IDs when present, and do not include credentials or response bodies in error messages.
+Install the optional `providers` extra (`pip install -e '.[providers]'`) to use the streaming paths; batch paths use the existing `httpx` dependency. SDK/API calls have bounded request/connect timeouts, map HTTP and WebSocket failures to `ProviderError`, retain provider request IDs when present (on the terminal event for streaming), and do not include credentials or response bodies in error messages.
 
 ## Official API references checked
 

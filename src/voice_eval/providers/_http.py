@@ -5,6 +5,15 @@ import httpx
 from voice_eval.providers.errors import ProviderError, ProviderErrorCode
 
 
+def websocket_request_id(socket: object, header: str) -> str | None:
+    """Read a provider correlation ID from the successful handshake, if exposed."""
+
+    response = getattr(socket, "response", None)
+    headers = getattr(response, "headers", None)
+    request_id = headers.get(header) if headers is not None else None
+    return request_id if isinstance(request_id, str) else None
+
+
 def map_http_error(provider_id: str, error: httpx.HTTPError) -> ProviderError:
     request_id = None
     response = getattr(error, "response", None)

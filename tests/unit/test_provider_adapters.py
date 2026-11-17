@@ -18,9 +18,17 @@ from voice_eval.domain.contracts import (
     TranscriptionOptions,
 )
 from voice_eval.providers._http import map_connection_error
-from voice_eval.providers.deepgram import DeepgramProvider, DeepgramStreamingProvider
+from voice_eval.providers.deepgram import (
+    DeepgramProvider,
+    DeepgramStreamingProvider,
+    DeepgramStreamingSession,
+)
 from voice_eval.providers.errors import ProviderError, ProviderErrorCode
-from voice_eval.providers.openai import OpenAIProvider, OpenAIRealtimeProvider
+from voice_eval.providers.openai import (
+    OpenAIProvider,
+    OpenAIRealtimeProvider,
+    OpenAIRealtimeSession,
+)
 
 KEY = SecretStr("test-secret-key")
 AUDIO = AudioInput(
@@ -151,6 +159,9 @@ async def test_openai_realtime_maps_interim_and_completed_events_and_closes() ->
                 ),
             ]
             self.closed = False
+            self.response = type(
+                "HandshakeResponse", (), {"headers": {"x-request-id": "openai-ws"}}
+            )()
 
         async def send(self, message: str) -> None:
             self.sent.append(message)
@@ -200,6 +211,7 @@ async def test_openai_realtime_maps_interim_and_completed_events_and_closes() ->
     ]
     assert events[0].is_terminal is False
     assert events[1].is_terminal is True
+    assert events[1].request_id == "openai-ws"
     assert socket.closed
 
 
@@ -213,6 +225,81 @@ async def test_openai_realtime_rejects_unsupported_audio_format() -> None:
             )
         )
     assert raised.value.code == ProviderErrorCode.UNSUPPORTED_FEATURE
+
+
+@async_test
+async def test_openai_realtime_setup_errors_close_socket_and_are_typed() -> None:
+    class Socket:
+        def __init__(self, failure: str) -> None:
+            self.failure = failure
+            self.closed = False
+
+        async def send(self, _: str) -> None:
+            if self.failure == "send":
+                raise OSError("private transport detail")
+
+        async def recv(self) -> str:
+            if self.failure == "receive":
+                raise OSError("private transport detail")
+            if self.failure == "json":
+                return "{invalid json"
+            if self.failure == "timeout":
+                await asyncio.sleep(0.02)
+            return json.dumps({"type": "session.updated"})
+
+        async def close(self) -> None:
+            self.closed = True
+
+    for failure in ("send", "receive", "json", "timeout"):
+        socket = Socket(failure)
+
+        async def connect(*_args: Any, _socket: Socket = socket, **_kwargs: Any) -> Socket:
+            return _socket
+
+        provider = OpenAIRealtimeProvider(KEY, connect=connect, timeout_seconds=0.001)
+        with pytest.raises(ProviderError) as raised:
+            await provider.open_session(
+                StreamingTranscriptionOptions(
+                    model="gpt-live-transcribe", sample_rate_hz=24000, encoding="pcm16"
+                )
+            )
+        assert socket.closed
+        assert "private transport detail" not in str(raised.value)
+
+
+@async_test
+async def test_openai_events_convert_malformed_and_unexpected_disconnects() -> None:
+    class Socket:
+        def __init__(self, messages: list[str], disconnect: bool = False) -> None:
+            self.messages = messages
+            self.disconnect = disconnect
+
+        async def send(self, _: str) -> None:
+            pass
+
+        def __aiter__(self) -> AsyncIterator[str]:
+            async def iterate() -> AsyncIterator[str]:
+                for message in self.messages:
+                    yield message
+                if self.disconnect:
+                    raise OSError("private socket detail")
+
+            return iterate()
+
+        async def close(self) -> None:
+            pass
+
+    for socket in (
+        Socket(["{invalid json"]),
+        Socket([json.dumps({"type": "event", "request_id": "openai-known"})], disconnect=True),
+    ):
+        session = OpenAIRealtimeSession(socket, interim_results=True)
+        await session.finish_audio()
+        with pytest.raises(ProviderError) as raised:
+            _ = [event async for event in session.events()]
+        assert "private socket detail" not in str(raised.value)
+        if socket.disconnect:
+            assert raised.value.request_id == "openai-known"
 
 
 @async_test
@@ -363,10 +450,46 @@ async def test_deepgram_stream_maps_interim_final_and_speech_final_and_closes() 
     assert [event.is_final for event in events] == [False, True, False]
     assert [event.speech_final for event in events] == [False, True, None]
     assert [event.is_terminal for event in events] == [False, False, True]
+    assert events[-1].request_id == "dg-stream-request"
     assert events[1].start_ms == 100 and events[1].end_ms == 500
     assert events[1].speech_final is True
     assert len(socket.sent) == 2
     assert socket.closed
+
+
+@async_test
+async def test_deepgram_events_convert_malformed_and_unexpected_disconnects() -> None:
+    class Socket:
+        def __init__(self, messages: list[str], disconnect: bool = False) -> None:
+            self.messages = messages
+            self.disconnect = disconnect
+
+        async def send(self, _: str) -> None:
+            pass
+
+        def __aiter__(self) -> AsyncIterator[str]:
+            async def iterate() -> AsyncIterator[str]:
+                for message in self.messages:
+                    yield message
+                if self.disconnect:
+                    raise OSError("private socket detail")
+
+            return iterate()
+
+        async def close(self) -> None:
+            pass
+
+    for socket in (
+        Socket(["{invalid json"]),
+        Socket([json.dumps({"type": "Metadata", "request_id": "dg-known"})], disconnect=True),
+    ):
+        session = DeepgramStreamingSession(socket)
+        await session.finish_audio()
+        with pytest.raises(ProviderError) as raised:
+            _ = [event async for event in session.events()]
+        assert "private socket detail" not in str(raised.value)
+        if socket.disconnect:
+            assert raised.value.request_id == "dg-known"
 
 
 @async_test
