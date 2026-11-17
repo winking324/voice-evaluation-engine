@@ -105,3 +105,44 @@ root. Do not commit datasets or audio files to Git. The adapter does not choose
 a public dataset or assert its license; callers are responsible for dataset
 selection and license review. Tests use synthetic local fixtures and do not
 download public datasets.
+
+## Reproducible noisy sample
+
+The local noise utility uses the image's `audio` extra and does not call any
+STT provider. It reads one sample from a manifest, adds seeded Gaussian white
+noise at a requested SNR, and writes a PCM16 WAV plus a one-sample manifest.
+The versioned SplitMix64/Box-Muller algorithm and inputs are recorded in the
+generated manifest tags and revision. A single uniform gain is applied if
+needed to avoid clipping while preserving SNR. Existing input files are never
+modified. The source audio corpus is only read; new files are written only to
+`audio/generated/noisy-samples/` and a top-level
+`manifests/noisy-sample-<hash>.json`, so the normal manifest catalog can find
+the generated sample.
+
+For a prepared corpus, run the tool in a short-lived container with the data
+root mounted read-write for this command. Set `DATASET_SOURCE_DIR` to the same
+host directory configured for Compose; the default below matches Compose's
+default and does not source `.env`:
+
+```bash
+export DATASET_SOURCE_DIR=./data/datasets
+docker compose --project-name voice-eval-dev build app
+docker run --rm \
+  --user "$(id -u):$(id -g)" -e HOME=/tmp \
+  --mount type=bind,src="$DATASET_SOURCE_DIR",dst=/data \
+  --entrypoint python voice-eval-dev-app \
+  -m voice_eval.datasets.noisy_sample \
+  --manifest /data/manifests/librispeech-test-clean.json \
+  --sample-id '1089-134686-0000' --data-root /data --snr-db 10 --seed 42
+```
+
+This one-off container mounts the prepared `DATASET_SOURCE_DIR` read-write;
+the regular app Compose service continues mounting its `manifests/` and
+`audio/` subdirectories read-only. After generation, the app can discover and
+read the generated files through those regular mounts.
+
+The same operation is available as `create_noisy_sample(manifest_path,
+sample_id, data_root, snr_db=..., seed=...)`. It rejects invalid SNR/seed,
+manifests outside the root, empty or silent audio, and output paths that
+escape through symlinks. PCM16 quantization can cause a small difference
+between requested and measured SNR.
