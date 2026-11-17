@@ -16,6 +16,8 @@ export interface DatasetDto {
   manifest_ref: string;
   declared_revision: string | null;
   resolved_revision: string | null;
+  revision_status: "precomputed" | "computed_on_run";
+  revision_note: string;
   license: string | null;
   language: string | null;
   locale: string | null;

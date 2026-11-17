@@ -8,6 +8,8 @@ export interface DatasetChoice {
   manifestRef: string;
   revision: string | null;
   declaredRevision: string | null;
+  revisionStatus: "precomputed" | "computed_on_run";
+  revisionNote: string;
   sampleCount: number;
   groundTruthCount: number;
   reproducible: boolean;

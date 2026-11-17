@@ -35,7 +35,7 @@ def build_librispeech_manifest(
         soundfile = import_module("soundfile")
     except ImportError as error:
         raise DatasetLoadError(
-            "LibriSpeech duration extraction requires the optional 'huggingface' extra"
+            "LibriSpeech duration extraction requires the optional 'audio' extra"
         ) from error
 
     entries: list[dict[str, object]] = []

@@ -396,7 +396,7 @@ function App() {
                 </select>
                 <small className="field-help">
                   {selectedDataset
-                    ? `${selectedDataset.sampleCount.toLocaleString()} samples · ${selectedDataset.groundTruthCount.toLocaleString()} with references · ${selectedDataset.locale ?? selectedDataset.language ?? "language not set"} · ${selectedDataset.license ?? "license not specified"} · revision ${selectedDataset.revision ?? selectedDataset.declaredRevision ?? "unresolved"} · ${selectedDataset.reproducible ? "reproducible" : "not pinned"}`
+                    ? `${selectedDataset.sampleCount.toLocaleString()} samples · ${selectedDataset.groundTruthCount.toLocaleString()} with references · ${selectedDataset.locale ?? selectedDataset.language ?? "language not set"} · ${selectedDataset.license ?? "license not specified"} · revision ${selectedDataset.revision ?? selectedDataset.declaredRevision ?? "computed at run creation"} · ${selectedDataset.revisionStatus === "computed_on_run" ? selectedDataset.revisionNote : selectedDataset.reproducible ? "reproducible" : "not pinned"}`
                     : "The manifest reference and resolved revision are snapshotted with the run."}
                 </small>
               </label>
@@ -600,6 +600,8 @@ function toDatasetChoice(dataset: DatasetDto): DatasetChoice {
     manifestRef: dataset.manifest_ref,
     revision: dataset.resolved_revision,
     declaredRevision: dataset.declared_revision,
+    revisionStatus: dataset.revision_status,
+    revisionNote: dataset.revision_note,
     sampleCount: dataset.sample_count,
     groundTruthCount: dataset.ground_truth_count,
     reproducible: dataset.reproducible,

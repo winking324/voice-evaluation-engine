@@ -12,7 +12,7 @@
 
 ### Run progress
 
-- Show queued/running/completed/failed/cancelled states and counts (completed, running, pending, retrying, failed/skipped).
+- Show queued/running/completed/failed/cancelled states and counts (completed, running, pending, retrying, failed/skipped). A sample enters `retrying` only between retryable provider attempts; process recovery converts `running` and `retrying` samples to `interrupted`.
 - Show elapsed time and current provider/sample progress without exposing audio/transcript content unnecessarily.
 - Support cancellation and resume/retry failed samples according to policy.
 
@@ -34,6 +34,8 @@
 - `GET /runs/{run_id}/events` — SSE progress stream; polling fallback for simpler deployments.
 - `GET /runs/{run_id}/export?format=csv|json` — export report.
 - `GET /providers` — provider capability/config schema; never return credentials.
+
+Local manifests without declared per-audio checksums are listed with `revision_status="computed_on_run"`; the UI should say that run creation validates audio and computes the content fingerprint, rather than labeling the dataset unpinned. When all audio checksums are declared, the catalog can preview the resolved fingerprint.
 
 The API is asynchronous for batch execution. Idempotency key on run creation prevents accidental duplicate submissions. Schema changes require explicit API versioning/migration policy.
 

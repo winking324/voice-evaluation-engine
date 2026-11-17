@@ -19,6 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+audio = ["numpy>=1.26,<3", "soundfile>=0.12,<1", "soxr>=0.5,<2"]
 huggingface = ["datasets[audio]>=3.0,<5"]
 dev = ["mypy>=1.13,<2", "pytest>=8,<9", "ruff>=0.8,<1"]
 providers = ["websockets>=14,<17"]
