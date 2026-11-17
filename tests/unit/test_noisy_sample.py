@@ -1,6 +1,8 @@
 import hashlib
 import json
 import math
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -8,6 +10,19 @@ import soundfile as sf
 
 from voice_eval.datasets.manifest import DatasetLoadError, load_manifest
 from voice_eval.datasets.noisy_sample import create_noisy_sample
+
+
+def test_module_cli_help_has_no_runpy_warning() -> None:
+    result = subprocess.run(
+        [sys.executable, "-W", "error", "-m", "voice_eval.datasets.noisy_sample", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout
+    assert "RuntimeWarning" not in result.stderr
 
 
 @pytest.fixture

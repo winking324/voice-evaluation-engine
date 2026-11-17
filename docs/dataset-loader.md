@@ -141,8 +141,10 @@ the regular app Compose service continues mounting its `manifests/` and
 `audio/` subdirectories read-only. After generation, the app can discover and
 read the generated files through those regular mounts.
 
-The same operation is available as `create_noisy_sample(manifest_path,
-sample_id, data_root, snr_db=..., seed=...)`. It rejects invalid SNR/seed,
+The same operation is available by importing `create_noisy_sample` from
+`voice_eval.datasets.noisy_sample` and calling
+`create_noisy_sample(manifest_path, sample_id, data_root, snr_db=..., seed=...)`.
+It rejects invalid SNR/seed,
 manifests outside the root, empty or silent audio, and output paths that
 escape through symlinks. PCM16 quantization can cause a small difference
 between requested and measured SNR.
