@@ -493,6 +493,58 @@ async def test_deepgram_events_convert_malformed_and_unexpected_disconnects() ->
 
 
 @async_test
+async def test_deepgram_normal_close_without_completion_metadata_is_not_terminal() -> None:
+    class Socket:
+        async def send(self, _: str) -> None:
+            pass
+
+        def __aiter__(self) -> AsyncIterator[str]:
+            async def iterate() -> AsyncIterator[str]:
+                if False:
+                    yield ""
+
+            return iterate()
+
+        async def close(self) -> None:
+            pass
+
+    session = DeepgramStreamingSession(Socket())
+    await session.finish_audio()
+    received = []
+    with pytest.raises(ProviderError, match="closed without completion metadata"):
+        async for event in session.events():
+            received.append(event)
+
+    assert not any(event.is_terminal for event in received)
+
+
+@async_test
+async def test_deepgram_metadata_without_request_id_uses_handshake_id() -> None:
+    class Socket:
+        response = type("HandshakeResponse", (), {"headers": {"dg-request-id": "dg-handshake"}})()
+
+        async def send(self, _: str) -> None:
+            pass
+
+        def __aiter__(self) -> AsyncIterator[str]:
+            async def iterate() -> AsyncIterator[str]:
+                yield json.dumps({"type": "Metadata"})
+
+            return iterate()
+
+        async def close(self) -> None:
+            pass
+
+    session = DeepgramStreamingSession(Socket())
+    await session.finish_audio()
+    events = [event async for event in session.events()]
+
+    assert len(events) == 1
+    assert events[0].is_terminal
+    assert events[0].request_id == "dg-handshake"
+
+
+@async_test
 async def test_deepgram_http_failure_maps_status_request_id_and_hides_key() -> None:
     async def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(401, headers={"dg-request-id": "dg-auth"}, text="test-secret-key")

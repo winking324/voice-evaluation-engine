@@ -248,6 +248,7 @@ class DeepgramStreamingSession:
         self._socket = socket
         self._closed = False
         self._finish_requested = False
+        self._completion_metadata_received = False
         self._request_id = request_id or websocket_request_id(socket, "dg-request-id")
 
     async def send_audio(self, frame: AudioFrame) -> None:
@@ -309,6 +310,8 @@ class DeepgramStreamingSession:
                 if isinstance(request_id, str):
                     self._request_id = request_id
                 if payload.get("type") == "Metadata":
+                    if self._finish_requested:
+                        self._completion_metadata_received = True
                     continue
                 if payload.get("type") == "Error":
                     raise ProviderError(
@@ -373,6 +376,14 @@ class DeepgramStreamingSession:
                 raise ProviderError(
                     ProviderErrorCode.UNKNOWN,
                     "Deepgram closed the stream before input was finalized",
+                    retryable=True,
+                    provider_id="deepgram",
+                    request_id=self._request_id,
+                )
+            if not self._completion_metadata_received:
+                raise ProviderError(
+                    ProviderErrorCode.UNKNOWN,
+                    "Deepgram stream closed without completion metadata",
                     retryable=True,
                     provider_id="deepgram",
                     request_id=self._request_id,
