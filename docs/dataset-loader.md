@@ -114,7 +114,8 @@ noise at a requested SNR, and writes a PCM16 WAV plus a one-sample manifest.
 The versioned SplitMix64/Box-Muller algorithm and inputs are recorded in the
 generated manifest tags and revision. A single uniform gain is applied if
 needed to avoid clipping while preserving SNR. Existing input files are never
-modified. Outputs go to `audio/generated/noisy-samples/` and to a top-level
+modified. The source audio corpus is only read; new files are written only to
+`audio/generated/noisy-samples/` and a top-level
 `manifests/noisy-sample-<hash>.json`, so the normal manifest catalog can find
 the generated sample.
 
@@ -123,10 +124,11 @@ root mounted read-write for this command (set `DATASET_SOURCE_DIR` to the host
 directory used by Compose):
 
 ```bash
-docker compose build app
+docker compose --project-name voice-eval-dev build app
 docker run --rm \
+  --user "$(id -u):$(id -g)" -e HOME=/tmp \
   --mount type=bind,src="$DATASET_SOURCE_DIR",dst=/data \
-  --entrypoint python "$(docker compose images -q app)" \
+  --entrypoint python voice-eval-dev-app \
   -m voice_eval.datasets.noisy_sample \
   --manifest /data/manifests/librispeech-test-clean.json \
   --sample-id '1089-134686-0000' --data-root /data --snr-db 10 --seed 42
