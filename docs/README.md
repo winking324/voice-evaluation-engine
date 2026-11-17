@@ -10,9 +10,10 @@ These documents define the first implementation before code is added. The agreed
 4. [Evaluation metrics and transcript normalization](evaluation-and-normalization.md)
 5. [Providers, request execution, and latency measurement](providers-and-latency.md)
 6. [Datasets and benchmark protocol](datasets-and-benchmark-protocol.md)
-7. [Web UI, API, and persistence model](ui-api-and-data-model.md)
-8. [Concurrency, reliability, and security](concurrency-reliability-security.md)
-9. [Implementation plan and design review checklist](implementation-plan.md)
+7. [Dataset loader MVP usage](dataset-loader.md)
+8. [Web UI, API, and persistence model](ui-api-and-data-model.md)
+9. [Concurrency, reliability, and security](concurrency-reliability-security.md)
+10. [Implementation plan and design review checklist](implementation-plan.md)
 
 ## Decision summary
 
