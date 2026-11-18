@@ -268,6 +268,55 @@ async def test_openai_realtime_setup_errors_close_socket_and_are_typed() -> None
 
 
 @async_test
+async def test_openai_realtime_surfaces_bounded_provider_setup_diagnostics() -> None:
+    class Socket:
+        closed = False
+
+        async def send(self, _: str) -> None:
+            pass
+
+        async def recv(self) -> str:
+            return json.dumps(
+                {
+                    "type": "error",
+                    "request_id": "openai-error-1",
+                    "error": {
+                        "code": "invalid_value",
+                        "param": "audio.input.transcription.languages",
+                        "message": "unsupported language value",
+                    },
+                }
+            )
+
+        async def close(self) -> None:
+            self.closed = True
+
+    socket = Socket()
+
+    async def connect(*_args: Any, **_kwargs: Any) -> Socket:
+        return socket
+
+    provider = OpenAIRealtimeProvider(KEY, connect=connect)
+    with pytest.raises(ProviderError) as raised:
+        await provider.open_session(
+            StreamingTranscriptionOptions(
+                model="gpt-live-transcribe",
+                sample_rate_hz=24000,
+                encoding="pcm16",
+                language="en",
+            )
+        )
+
+    assert raised.value.code == ProviderErrorCode.INVALID_INPUT
+    assert raised.value.retryable is False
+    assert raised.value.request_id == "openai-error-1"
+    assert "code=invalid_value" in str(raised.value)
+    assert "audio.input.transcription.languages" in str(raised.value)
+    assert "unsupported language value" in str(raised.value)
+    assert socket.closed
+
+
+@async_test
 async def test_openai_events_convert_malformed_and_unexpected_disconnects() -> None:
     class Socket:
         def __init__(self, messages: list[str], disconnect: bool = False) -> None:

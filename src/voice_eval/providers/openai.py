@@ -47,6 +47,46 @@ _AUDIO_SUFFIXES = {
 }
 
 
+def _realtime_setup_error(event: dict[str, Any], request_id: str | None) -> ProviderError:
+    """Keep useful provider diagnostics while bounding and classifying them."""
+    error = event.get("error")
+    error = error if isinstance(error, dict) else {}
+    provider_code = error.get("code")
+    provider_code = provider_code[:80] if isinstance(provider_code, str) else None
+    provider_message = error.get("message")
+    provider_message = provider_message[:300] if isinstance(provider_message, str) else None
+    provider_param = error.get("param")
+    provider_param = provider_param[:120] if isinstance(provider_param, str) else None
+
+    if provider_code == "invalid_api_key":
+        code = ProviderErrorCode.AUTHENTICATION
+        retryable = False
+    elif provider_code in {"rate_limit_exceeded", "too_many_requests"}:
+        code = ProviderErrorCode.RATE_LIMIT
+        retryable = True
+    elif provider_code in {"server_error", "internal_error", "overloaded_error"}:
+        code = ProviderErrorCode.TRANSIENT_SERVER
+        retryable = True
+    else:
+        code = ProviderErrorCode.INVALID_INPUT
+        retryable = False
+
+    details = [f"code={provider_code}" if provider_code else None]
+    details.append(f"param={provider_param}" if provider_param else None)
+    details.append(provider_message)
+    summary = "; ".join(part for part in details if part)
+    message = "OpenAI Realtime returned an error"
+    if summary:
+        message = f"{message}: {summary}"
+    return ProviderError(
+        code,
+        message,
+        retryable=retryable,
+        provider_id="openai",
+        request_id=request_id,
+    )
+
+
 class OpenAIProvider(BatchSpeechToTextProvider):
     """File transcription; pin the desired model in TranscriptionOptions."""
 
@@ -306,12 +346,8 @@ class OpenAIRealtimeProvider(StreamingSpeechToTextProvider):
                 if event.get("type") == "session.updated":
                     return session
                 if event.get("type") == "error":
-                    raise ProviderError(
-                        ProviderErrorCode.INVALID_INPUT,
-                        "OpenAI rejected the Realtime transcription session configuration",
-                        retryable=False,
-                        provider_id=self.provider_id,
-                        request_id=event.get("request_id"),
+                    raise _realtime_setup_error(
+                        event, event.get("request_id") or session._request_id
                     )
         except asyncio.CancelledError:
             try:
